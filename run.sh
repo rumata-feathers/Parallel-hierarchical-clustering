@@ -8,6 +8,19 @@ THREADS=4
 LINKAGES=(single complete average ward centroid median)
 CUDA=false   # set to true if built with -DENABLE_CUDA=ON
 
+# ---------------------------------------------------------------
+# 0. Setup Python environment
+# ---------------------------------------------------------------
+echo "Setting up Python environment..."
+ENV_DIR="env"
+if [ ! -d "$ENV_DIR" ]; then
+  python3 -m venv "$ENV_DIR"
+  echo "Python virtual environment created at $ENV_DIR"
+fi
+
+# Activate the environment
+source "$ENV_DIR/bin/activate"
+echo "Python environment activated."
 
 # ---------------------------------------------------------------
 # 1. Build
@@ -66,7 +79,7 @@ done
 # 3. Plot
 # ---------------------------------------------------------------
 echo "==> Installing Python dependencies..."
-pip install -q -r scripts/requirements.txt
+pip install -r scripts/requirements.txt
 
 echo "==> Plotting dendrograms..."
 python3 scripts/plot_dendrogram.py "$RESULTS_DIR"
