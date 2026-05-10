@@ -6,6 +6,7 @@ DATA_DIR="data/Clustering-Datasets/02. Synthetic"
 RESULTS_DIR="results"
 THREADS=4
 LINKAGES=(single complete average ward centroid median)
+CUDA=false   # set to true if built with -DENABLE_CUDA=ON
 
 
 # ---------------------------------------------------------------
@@ -49,6 +50,15 @@ for dataset in "${csv_files[@]}"; do
             --mode     parallel \
             --threads  "$THREADS" \
             --out-dir  "$RESULTS_DIR"
+
+        if [ "$CUDA" = true ]; then
+            echo "  $(basename "$dataset")  [$linkage]  cuda..."
+            ./build/hac \
+                --dataset  "$dataset" \
+                --linkage  "$linkage" \
+                --mode     cuda \
+                --out-dir  "$RESULTS_DIR"
+        fi
     done
 done
 

@@ -1,5 +1,7 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.18)
 project(ParallelHAC CXX)
+
+option(ENABLE_CUDA "Build with CUDA HAC support" OFF)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,7 +20,7 @@ if(NOT OpenMP_CXX_FOUND)
     message(FATAL_ERROR "OpenMP not found. Please install libomp using Homebrew: brew install libomp")
 endif()
 
-add_executable(hac
+set(HAC_SOURCES
     src/main.cpp
     src/hac/hac_serial.cpp
     src/hac/hac_parallel.cpp
@@ -26,6 +28,22 @@ add_executable(hac
     src/io/output_writer.cpp
 )
 
+if(ENABLE_CUDA)
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 17)
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES 70 80 86)
+    endif()
+    list(APPEND HAC_SOURCES src/hac/hac_cuda.cu)
+endif()
+
+add_executable(hac ${HAC_SOURCES})
+
 target_include_directories(hac PRIVATE src)
 target_link_libraries(hac PRIVATE OpenMP::OpenMP_CXX)
-target_compile_options(hac PRIVATE -O2 -Wall)
+target_compile_options(hac PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-O2 -Wall>)
+
+if(ENABLE_CUDA)
+    target_compile_definitions(hac PRIVATE ENABLE_CUDA)
+    target_compile_options(hac PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O2 --expt-relaxed-constexpr>)
+endif()

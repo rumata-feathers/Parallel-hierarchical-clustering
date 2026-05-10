@@ -7,6 +7,9 @@
 #include "hac/distance.hpp"
 #include "hac/hac_parallel.hpp"
 #include "hac/hac_serial.hpp"
+#ifdef ENABLE_CUDA
+#include "hac/hac_cuda.hpp"
+#endif
 #include "hac/linkage.hpp"
 #include "io/data_loader.hpp"
 #include "io/output_writer.hpp"
@@ -81,6 +84,14 @@ int main(int argc, char** argv) {
         result = hac_serial(distances, linkage);
     } else if (mode == "parallel") {
         result = hac_parallel(distances, linkage, n_threads);
+    } else if (mode == "cuda") {
+#ifdef ENABLE_CUDA
+        result = hac_cuda(distances, linkage);
+#else
+        std::cerr << "Binary was built without CUDA support. "
+                     "Rebuild with -DENABLE_CUDA=ON.\n";
+        return 1;
+#endif
     } else {
         std::cerr << "Unknown mode: " << mode << "\n";
         return 1;
