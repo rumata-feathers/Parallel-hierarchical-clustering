@@ -2,6 +2,7 @@
 set -euo pipefail
 
 DATA_DIR="data/Clustering-Datasets/02. Synthetic"
+
 RESULTS_DIR="results"
 THREADS=4
 LINKAGES=(single complete average ward centroid median)
@@ -12,8 +13,8 @@ LINKAGES=(single complete average ward centroid median)
 # ---------------------------------------------------------------
 
 echo "Building..."
-mkdir -p build && cd build && cmake .. && make -j$THREADS && cd ..
-
+# mkdir -p build && cd build && cmake .. && make -j$THREADS && cd ..
+cmake -S . -B build && cmake --build build -j$THREADS
 
 # ---------------------------------------------------------------
 # 2. Execute
@@ -23,6 +24,8 @@ mkdir -p "$RESULTS_DIR"
 
 shopt -s nullglob
 csv_files=("$DATA_DIR"/*.csv)
+echo "Datasets found: ${#csv_files[@]}"
+
 if [ ${#csv_files[@]} -eq 0 ]; then
     echo "ERROR: No CSV files found in $DATA_DIR/"
     echo "       Run: git submodule update --init"
