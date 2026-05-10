@@ -81,7 +81,7 @@ int main(int argc, char** argv) {
     // let's go baby
     std::vector<std::array<double, 4>> result;
     if (mode == "serial") {
-        result = hac_serial(distances, linkage);
+        result = hac_serial(distances, df.features, linkage);
     } else if (mode == "parallel") {
         result = hac_parallel(distances, linkage, n_threads);
     } else if (mode == "cuda") {

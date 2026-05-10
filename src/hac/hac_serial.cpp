@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <limits>
 
+#include "distance.hpp"
+
 /*
  *   @param cluster_i, cluster_j : two clusters to merge
  *   @param dist : n x n distance matrix
@@ -13,22 +15,49 @@
 double compute_cluster_dist(const std::vector<int>& cluster_i,
                             const std::vector<int>& cluster_j,
                             const std::vector<std::vector<double>>& dist,
+                            const std::vector<std::vector<double>>& data,
                             Linkage linkage) {
     double d = 0.0;
     if (cluster_i.empty() || cluster_j.empty())
         return std::numeric_limits<double>::infinity();
 
     switch (linkage) {
-        case Linkage::SINGLE:
+        case Linkage::SINGLE: {
             d = std::numeric_limits<double>::infinity();
             for (auto& a : cluster_i)
                 for (auto& b : cluster_j) d = std::min(d, dist[a][b]);
             break;
+        }
         case Linkage::COMPLETE:
+            d = 0.0;
             break;
-        case Linkage::AVERAGE: {
+        case Linkage::AVERAGE:
+            d = 0.0;
+            break;
+        case Linkage::WARD:
+            d = 0.0;
+            break;
+        case Linkage::CENTROID: {
+            std::vector<double> centroid_i(data[0].size(), 0.0);
+            std::vector<double> centroid_j(data[0].size(), 0.0);
+            for (auto& a : cluster_i)
+                for (size_t k = 0; k < centroid_i.size(); ++k)
+                    centroid_i[k] += data[a][k];
+            for (auto& b : cluster_j)
+                for (size_t k = 0; k < centroid_j.size(); ++k)
+                    centroid_j[k] += data[b][k];
+            for (size_t k = 0; k < centroid_i.size(); ++k) {
+                centroid_i[k] /= cluster_i.size();
+                centroid_j[k] /= cluster_j.size();
+            }
+
+            d = euclidean(centroid_i, centroid_j);
             break;
         }
+        case Linkage::MEDIAN:
+            d = 0.0;
+            break;
+
         default:
             throw std::runtime_error("Unsupported linkage for serial mode");
     }
@@ -43,7 +72,8 @@ double compute_cluster_dist(const std::vector<int>& cluster_i,
  * merged_size}
  */
 std::vector<std::array<double, 4>> hac_serial(
-    const std::vector<std::vector<double>>& dist, Linkage linkage) {
+    const std::vector<std::vector<double>>& dist,
+    const std::vector<std::vector<double>>& df, Linkage linkage) {
     int n = static_cast<int>(dist.size());
 
     std::vector<std::vector<int>> cluster_nodes(n);
@@ -57,7 +87,7 @@ std::vector<std::array<double, 4>> hac_serial(
 
     // for scipy dendrogram
     int next_id = n;
-    for (int step = 0; step < n-1; ++step) {
+    for (int step = 0; step < n - 1; ++step) {
         // find clusters to merge
         double best_d = std::numeric_limits<double>::infinity();
         int cluster_i = -1, cluster_j = -1;
@@ -66,7 +96,7 @@ std::vector<std::array<double, 4>> hac_serial(
             for (int j = i + 1; j < n; ++j) {
                 if (cluster_nodes[j].empty()) continue;
                 double d = compute_cluster_dist(
-                    cluster_nodes[i], cluster_nodes[j], dist, linkage);
+                    cluster_nodes[i], cluster_nodes[j], dist, df, linkage);
                 if (d < best_d) {
                     best_d = d;
                     cluster_i = i;
