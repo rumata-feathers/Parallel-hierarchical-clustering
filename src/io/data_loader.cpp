@@ -17,8 +17,12 @@ static std::vector<std::string> split_line(const std::string& line) {
 static bool is_numeric(const std::string& s) {
     if (s.empty()) return false;
 
-    for (char c : s) {
-        if (!std::isdigit(c) && c != '.' && c != '-' && c != '+') return false;
+    try {
+        std::stod(s);  // Attempt to convert the string to a double
+    } catch (const std::invalid_argument& e) {
+        return false;  // Not a valid numeric string
+    } catch (const std::out_of_range& e) {
+        return false;  // Number is out of range
     }
     return true;
 }
