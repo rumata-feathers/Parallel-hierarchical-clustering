@@ -20,3 +20,8 @@
 
 - Source code for sequential and parallel HAC
 - Scripts to run experiments and generate timings / plots
+
+## Credit
+ - Georgy Kuznetsov
+ - Julia Korytkowska
+ - Vladislava Zhilenko
