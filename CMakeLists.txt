@@ -19,9 +19,9 @@ if(NOT OpenMP_CXX_FOUND)
 endif()
 
 add_executable(hac
-    # src/main.cpp
-    # src/hac/hac_serial.cpp
-    # src/hac/hac_parallel.cpp
+    src/main.cpp
+    src/hac/hac_serial.cpp
+    src/hac/hac_parallel.cpp
     src/io/data_loader.cpp
     src/io/output_writer.cpp
 )
