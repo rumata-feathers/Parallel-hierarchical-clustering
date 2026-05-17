@@ -1,8 +1,21 @@
 #!/usr/bin/env python3
 """
-Reads results/timings.csv and produces two charts:
-  1. Wall time: serial vs parallel per dataset/linkage
-  2. Speedup: serial_time / parallel_time
+Reads results/timings.csv and produces four figures.
+Works with any subset of modes (serial, parallel, cuda, …).
+All comparisons are relative to 'serial' as the baseline.
+
+  Figure 1 — Runtime scatter (log-log), one panel per non-serial mode
+      x = serial ms, y = mode ms.  Point size ∝ log(n).  Below y=x = faster.
+
+  Figure 2 — Speedup bars (sorted descending)
+      Bar labels include n_points.  Red dashed line at 1× (break-even).
+
+  Figure 3 — Speedup heatmap per non-serial mode
+      Rows = datasets (with n=X), columns = linkages, colour = speedup.
+
+  Figure 4 — Scaling: wall time and speedup vs n_points
+      Shows how runtime and speedup grow with dataset size.
+      Skipped gracefully if n_points column is absent (old CSV format).
 
 Usage:
     python3 scripts/plot_timings.py [results_dir]
@@ -10,20 +23,320 @@ Usage:
 import sys
 import os
 
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+
+BASELINE       = "serial"
+LINKAGE_ORDER  = ["single", "complete", "average", "ward", "centroid", "median"]
+MODE_COLORS    = {"serial": "dimgray", "parallel": "steelblue", "cuda": "darkorange"}
+MODE_COLOR_DEF = "mediumpurple"
 
 
-def compute_speedup(df: pd.DataFrame) -> pd.DataFrame:
-    serial   = df[df["mode"] == "serial"].set_index(["dataset", "linkage"])["wall_ms"]
-    parallel = df[df["mode"] == "parallel"].copy()
-    parallel["speedup"] = parallel.apply(
-        lambda r: serial.get((r["dataset"], r["linkage"]), float("nan")) / r["wall_ms"],
-        axis=1,
-    )
-    return parallel
+def load_timings(path: str) -> pd.DataFrame:
+    # on_bad_lines='skip' handles rows whose column count doesn't match the
+    # header — this can happen when old 5-column timings (without n_points)
+    # are merged with new 6-column timings in the same file.
+    return pd.read_csv(path, on_bad_lines="skip")
 
 
+def has_n_points(df: pd.DataFrame) -> bool:
+    return "n_points" in df.columns
+
+
+def non_serial_modes(df: pd.DataFrame) -> list[str]:
+    present = set(df["mode"].unique()) - {BASELINE}
+    order   = ["parallel", "cuda"]
+    return [m for m in order if m in present] + sorted(present - set(order))
+
+
+def make_speedup_table(df: pd.DataFrame, compare_mode: str) -> pd.DataFrame:
+    """
+    Returns DataFrame: [dataset, linkage, n_points?, serial_ms, <mode>_ms, speedup].
+    Duplicate (dataset, linkage) rows (re-runs) are averaged.
+    Rows where compare_mode exited near-instantly (unsupported linkage) are dropped.
+    """
+    base = (df[df["mode"] == BASELINE]
+            .groupby(["dataset", "linkage"])["wall_ms"].mean()
+            .rename("serial_ms"))
+    comp = (df[df["mode"] == compare_mode]
+            .groupby(["dataset", "linkage"])["wall_ms"].mean()
+            .rename(f"{compare_mode}_ms"))
+    merged = pd.concat([base, comp], axis=1).dropna()
+    merged = merged[merged[f"{compare_mode}_ms"] > 0.5]
+    merged["speedup"] = merged["serial_ms"] / merged[f"{compare_mode}_ms"]
+    merged = merged.reset_index()
+
+    if has_n_points(df):
+        n_pts = df.groupby("dataset")["n_points"].first()
+        merged = merged.join(n_pts, on="dataset")
+
+    return merged
+
+
+def linkage_palette() -> dict:
+    cmap = plt.get_cmap("tab10")
+    return {l: cmap(i) for i, l in enumerate(LINKAGE_ORDER)}
+
+
+def _point_sizes(n_pts_series: pd.Series, lo: int = 30, hi: int = 200) -> np.ndarray:
+    """Scale point sizes proportionally to log(n) in the range [lo, hi]."""
+    log_n = np.log1p(n_pts_series.values.astype(float))
+    rng   = log_n.max() - log_n.min()
+    if rng == 0:
+        return np.full(len(log_n), (lo + hi) / 2)
+    return lo + (hi - lo) * (log_n - log_n.min()) / rng
+
+
+# ---------------------------------------------------------------
+# Figure 1: log-log scatter, one subplot per non-serial mode
+# ---------------------------------------------------------------
+def plot_scatter(df: pd.DataFrame, modes: list[str], plots_dir: str) -> None:
+    n = len(modes)
+    if n == 0:
+        return
+
+    use_n = has_n_points(df)
+    fig, axes = plt.subplots(1, n, figsize=(7 * n, 6.5), squeeze=False)
+    palette   = linkage_palette()
+
+    for col, mode in enumerate(modes):
+        ax  = axes[0][col]
+        tbl = make_speedup_table(df, mode)
+        if tbl.empty:
+            ax.text(0.5, 0.5, f"No data for '{mode}'",
+                    ha="center", va="center", transform=ax.transAxes)
+            continue
+
+        for linkage, grp in tbl.groupby("linkage"):
+            sizes = _point_sizes(grp["n_points"]) if use_n else 60
+            ax.scatter(grp["serial_ms"], grp[f"{mode}_ms"],
+                       color=palette.get(linkage, "gray"), label=linkage,
+                       s=sizes, alpha=0.85, edgecolors="white", linewidths=0.4)
+
+        lo = min(tbl["serial_ms"].min(), tbl[f"{mode}_ms"].min()) * 0.8
+        hi = max(tbl["serial_ms"].max(), tbl[f"{mode}_ms"].max()) * 1.3
+        xs = np.array([lo, hi])
+        ax.plot(xs, xs,     color="black",    lw=1.3, ls="--", label="1× (no speedup)")
+        ax.plot(xs, xs / 2, color="seagreen", lw=1.0, ls=":",  label="2× speedup")
+        ax.plot(xs, xs / 4, color="seagreen", lw=0.8, ls="-.", label="4× speedup")
+
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlabel("Serial wall time (ms)", fontsize=10)
+        ax.set_ylabel(f"{mode.capitalize()} wall time (ms)", fontsize=10)
+        size_note = "  (point size ∝ n)" if use_n else ""
+        ax.set_title(f"Serial  vs  {mode}  (log–log){size_note}\nbelow dashed line = {mode} wins",
+                     fontsize=10)
+        ax.xaxis.set_major_formatter(ticker.ScalarFormatter())
+        ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
+        ax.legend(title="linkage", fontsize=7, title_fontsize=7, loc="upper left")
+        ax.set_aspect("equal", adjustable="datalim")
+        ax.grid(True, which="both", ls=":", alpha=0.4)
+
+    fig.suptitle("Runtime comparison  (log–log scatter)", fontsize=12, y=1.01)
+    fig.tight_layout()
+    out = os.path.join(plots_dir, "timings_scatter.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  saved: {out}")
+
+
+# ---------------------------------------------------------------
+# Figure 2: grouped speedup bars sorted descending, labels include n
+# ---------------------------------------------------------------
+def plot_speedup_bars(df: pd.DataFrame, modes: list[str], plots_dir: str) -> None:
+    tables = {m: make_speedup_table(df, m) for m in modes}
+    tables = {m: t for m, t in tables.items() if not t.empty}
+    if not tables:
+        return
+
+    use_n      = has_n_points(df)
+    first_mode = list(tables.keys())[0]
+    base_tbl   = tables[first_mode].set_index(["dataset", "linkage"])
+    index_sorted = base_tbl["speedup"].sort_values(ascending=False).index
+
+    n_bars   = len(tables)
+    n_groups = len(index_sorted)
+    width    = 0.8 / n_bars
+    xs       = np.arange(n_groups)
+
+    # Build n_points lookup
+    if use_n:
+        n_pts_map = tables[first_mode].set_index("dataset")["n_points"].to_dict()
+    else:
+        n_pts_map = {}
+
+    fig, ax = plt.subplots(figsize=(max(10, n_groups * 0.45), 5))
+
+    for i, (mode, tbl) in enumerate(tables.items()):
+        speedup_map = dict(zip(zip(tbl["dataset"], tbl["linkage"]), tbl["speedup"]))
+        heights     = [speedup_map.get(idx, float("nan")) for idx in index_sorted]
+        color       = MODE_COLORS.get(mode, MODE_COLOR_DEF)
+        ax.bar(xs + i * width, heights, width=width, label=mode,
+               color=color, edgecolor="white", linewidth=0.4, alpha=0.85)
+
+        if n_groups <= 40:
+            for x, h in zip(xs + i * width, heights):
+                if not np.isnan(h):
+                    ax.text(x, h + 0.03, f"{h:.2f}×",
+                            ha="center", va="bottom", fontsize=5.5)
+
+    ax.axhline(1.0, color="red", lw=1.3, ls="--", label="break-even (1×)")
+
+    if use_n:
+        bar_labels = [f"{ds}\n{lk}\nn={int(n_pts_map.get(ds, 0))}"
+                      for ds, lk in index_sorted]
+    else:
+        bar_labels = [f"{ds}\n{lk}" for ds, lk in index_sorted]
+
+    ax.set_xticks(xs + (n_bars - 1) * width / 2)
+    ax.set_xticklabels(bar_labels, rotation=45, ha="right", fontsize=6.5)
+    ax.set_ylabel("Speedup  (serial / mode)", fontsize=10)
+    ax.set_title("Speedup over serial — sorted by highest speedup", fontsize=11)
+    ax.legend(fontsize=8)
+    ax.grid(axis="y", ls=":", alpha=0.4)
+    fig.tight_layout()
+
+    out = os.path.join(plots_dir, "timings_speedup.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  saved: {out}")
+
+
+# ---------------------------------------------------------------
+# Figure 3: speedup heatmap with n_points in row labels
+# ---------------------------------------------------------------
+def plot_speedup_heatmap(df: pd.DataFrame, modes: list[str], plots_dir: str) -> None:
+    n = len(modes)
+    if n == 0:
+        return
+
+    use_n = has_n_points(df)
+    fig, axes = plt.subplots(1, n, figsize=(8 * n, 4), squeeze=False)
+
+    for col, mode in enumerate(modes):
+        ax  = axes[0][col]
+        tbl = make_speedup_table(df, mode)
+        if tbl.empty:
+            ax.text(0.5, 0.5, f"No data for '{mode}'",
+                    ha="center", va="center", transform=ax.transAxes)
+            continue
+
+        pivot = tbl.pivot_table(index="dataset", columns="linkage",
+                                values="speedup", aggfunc="mean")
+        cols  = [c for c in LINKAGE_ORDER if c in pivot.columns]
+        pivot = pivot[cols]
+        vals  = pivot.values.astype(float)
+        n_rows = len(pivot)
+        fig.set_figheight(max(4, n_rows * 0.38))
+
+        vmax = max(2.0, float(np.nanmax(vals)))
+        im = ax.imshow(vals, aspect="auto", cmap="RdYlGn", vmin=0.5, vmax=vmax)
+
+        ax.set_xticks(range(len(cols)))
+        ax.set_xticklabels(cols, fontsize=9)
+        ax.set_yticks(range(n_rows))
+
+        if use_n:
+            n_pts_map = tbl.set_index("dataset")["n_points"].to_dict()
+            row_labels = [f"{ds}  (n={int(n_pts_map.get(ds, 0))})"
+                          for ds in pivot.index]
+        else:
+            row_labels = list(pivot.index)
+        ax.set_yticklabels(row_labels, fontsize=7)
+
+        ax.set_title(f"Speedup heatmap: serial / {mode}\n"
+                     f"(green > 1 = {mode} wins)", fontsize=10)
+        fig.colorbar(im, ax=ax, label="speedup", shrink=0.6)
+
+        for i in range(n_rows):
+            for j in range(len(cols)):
+                v = vals[i, j]
+                if not np.isnan(v):
+                    ax.text(j, i, f"{v:.2f}",
+                            ha="center", va="center", fontsize=6)
+
+    fig.suptitle("Speedup heatmaps", fontsize=12, y=1.01)
+    fig.tight_layout()
+    out = os.path.join(plots_dir, "timings_heatmap.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  saved: {out}")
+
+
+# ---------------------------------------------------------------
+# Figure 4: scaling — wall time and speedup vs n_points
+# ---------------------------------------------------------------
+def plot_scaling(df: pd.DataFrame, modes: list[str], plots_dir: str) -> None:
+    if not has_n_points(df):
+        print("  n_points column not in CSV — skipping scaling plot "
+              "(delete results/timings.csv and re-run to regenerate)")
+        return
+
+    all_modes = [BASELINE] + modes
+
+    # Average wall_ms over linkages for each (dataset, mode, n_points)
+    agg = (df[df["mode"].isin(all_modes)]
+           .groupby(["dataset", "mode", "n_points"])["wall_ms"]
+           .mean()
+           .reset_index()
+           .sort_values("n_points"))
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+    # ---- Left: wall time vs n ----
+    for mode in all_modes:
+        sub   = agg[agg["mode"] == mode]
+        color = MODE_COLORS.get(mode, MODE_COLOR_DEF)
+        ax1.plot(sub["n_points"], sub["wall_ms"], "o-",
+                 color=color, label=mode, lw=1.8, ms=5, alpha=0.9)
+
+    ax1.set_xscale("log")
+    ax1.set_yscale("log")
+    ax1.set_xlabel("n  (number of points)", fontsize=11)
+    ax1.set_ylabel("Wall time (ms, avg over linkages)", fontsize=11)
+    ax1.set_title("Runtime scaling  (log–log)", fontsize=11)
+    ax1.xaxis.set_major_formatter(ticker.ScalarFormatter())
+    ax1.yaxis.set_major_formatter(ticker.ScalarFormatter())
+    ax1.legend(fontsize=9)
+    ax1.grid(True, which="both", ls=":", alpha=0.4)
+
+    # ---- Right: speedup vs n ----
+    serial_agg = agg[agg["mode"] == BASELINE].set_index(["dataset", "n_points"])["wall_ms"]
+
+    for mode in modes:
+        mode_agg = agg[agg["mode"] == mode].set_index(["dataset", "n_points"])["wall_ms"]
+        common   = serial_agg.index.intersection(mode_agg.index)
+        if common.empty:
+            continue
+        speedup = (serial_agg.loc[common] / mode_agg.loc[common]).reset_index()
+        speedup.columns = ["dataset", "n_points", "speedup"]
+        speedup = speedup.sort_values("n_points")
+        color   = MODE_COLORS.get(mode, MODE_COLOR_DEF)
+        ax2.plot(speedup["n_points"], speedup["speedup"], "o-",
+                 color=color, label=mode, lw=1.8, ms=5, alpha=0.9)
+
+    ax2.axhline(1.0, color="red", lw=1.2, ls="--", label="break-even")
+    ax2.set_xscale("log")
+    ax2.set_xlabel("n  (number of points)", fontsize=11)
+    ax2.set_ylabel("Speedup  (serial / mode, avg over linkages)", fontsize=11)
+    ax2.set_title("Speedup vs n", fontsize=11)
+    ax2.xaxis.set_major_formatter(ticker.ScalarFormatter())
+    ax2.legend(fontsize=9)
+    ax2.grid(True, which="both", ls=":", alpha=0.4)
+
+    fig.tight_layout()
+    out = os.path.join(plots_dir, "timings_scaling.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  saved: {out}")
+
+
+# ---------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------
 if __name__ == "__main__":
     results_dir = sys.argv[1] if len(sys.argv) > 1 else "results"
     timing_path = os.path.join(results_dir, "timings.csv")
@@ -34,35 +347,22 @@ if __name__ == "__main__":
         print(f"No timings file at {timing_path} — run the pipeline first.")
         sys.exit(1)
 
-    df = pd.read_csv(timing_path)
-    df["label"] = df["dataset"] + " / " + df["linkage"]
+    df    = load_timings(timing_path)
+    modes = non_serial_modes(df)
 
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    if not modes:
+        print("Only serial timings found — nothing to compare.")
+        sys.exit(0)
 
-    # --- Wall time bar chart ---
-    pivot = df.pivot_table(index="label", columns="mode", values="wall_ms", aggfunc="mean")
-    pivot.plot(kind="bar", ax=axes[0], colormap="Set2")
-    axes[0].set_title("Wall time: serial vs parallel (ms)")
-    axes[0].set_ylabel("ms")
-    axes[0].set_xlabel("")
-    axes[0].tick_params(axis="x", rotation=45)
-    axes[0].legend(title="mode")
+    print(f"Modes detected: {[BASELINE] + modes}")
+    print("Plotting runtime scatter (log-log)...")
+    plot_scatter(df, modes, plots_dir)
 
-    # --- Speedup bar chart ---
-    speedup_df = compute_speedup(df)
-    if not speedup_df.empty:
-        speedup_df.groupby("label")["speedup"].mean().plot(
-            kind="bar", ax=axes[1], color="steelblue"
-        )
-        axes[1].axhline(1.0, color="red", linestyle="--", linewidth=1, label="no speedup")
-        axes[1].set_title("Speedup  (serial ms / parallel ms)")
-        axes[1].set_ylabel("speedup")
-        axes[1].set_xlabel("")
-        axes[1].tick_params(axis="x", rotation=45)
-        axes[1].legend()
+    print("Plotting speedup bars...")
+    plot_speedup_bars(df, modes, plots_dir)
 
-    fig.tight_layout()
-    out_path = os.path.join(plots_dir, "timings.png")
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved: {out_path}")
+    print("Plotting speedup heatmap...")
+    plot_speedup_heatmap(df, modes, plots_dir)
+
+    print("Plotting scaling (wall time & speedup vs n)...")
+    plot_scaling(df, modes, plots_dir)

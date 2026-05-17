@@ -106,8 +106,30 @@ def plot_one(csv_path: str, plots_dir: str, data_dir: str) -> None:
     base  = os.path.basename(csv_path).replace("_linkage.csv", "")
     stem  = base.rsplit("_", 2)[0]
 
+    # scipy requires at least 2 observations (Z must have ≥ 1 row).
+    # A 0-row Z happens when the linkage was not implemented and broke
+    # out of the merge loop immediately (stale result from an old run).
+    if Z.shape[0] == 0:
+        print(f"  skip: {os.path.basename(csv_path)}: linkage matrix is empty "
+              f"(likely unimplemented linkage — re-run to regenerate)")
+        return
+
     features, labels = load_dataset(stem, data_dir)
-    has_data = features is not None and features.shape[1] >= 2
+    n_orig = Z.shape[0] + 1  # number of original observations implied by Z
+
+    # Guard: labels must have exactly n_orig entries for scipy's dendrogram.
+    # A mismatch can happen when the C++ loader and pandas parse row counts
+    # differently (e.g. trailing blanks, auto-detected header).
+    has_data = (
+        features is not None
+        and features.shape[1] >= 2
+        and len(labels) == n_orig
+    )
+
+    if not has_data and features is not None and len(labels) != n_orig:
+        print(f"  warning: {os.path.basename(csv_path)}: "
+              f"Z implies {n_orig} leaves but labels has {len(labels)} — "
+              f"plotting without labels")
 
     if has_data:
         color_map = build_palette(labels)
@@ -134,7 +156,7 @@ if __name__ == "__main__":
     plots_dir   = os.path.join(results_dir, "plots")
     os.makedirs(plots_dir, exist_ok=True)
 
-    files = sorted(glob.glob(os.path.join(results_dir, "*_serial_linkage.csv")))
+    files = sorted(glob.glob(os.path.join(results_dir, "**", "*_serial_linkage.csv"), recursive=True))
     if not files:
         print(f"No serial linkage CSV files found in {results_dir}/")
         sys.exit(1)
