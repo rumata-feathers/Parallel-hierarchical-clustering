@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <limits>
-
+#include <iostream>
 #include "distance.hpp"
 
 /*
@@ -28,15 +28,6 @@ double compute_cluster_dist(const std::vector<int>& cluster_i,
                 for (auto& b : cluster_j) d = std::min(d, dist[a][b]);
             break;
         }
-        case Linkage::COMPLETE:
-            d = 0.0;
-            break;
-        case Linkage::AVERAGE:
-            d = 0.0;
-            break;
-        case Linkage::WARD:
-            d = 0.0;
-            break;
         case Linkage::CENTROID: {
             std::vector<double> centroid_i(data[0].size(), 0.0);
             std::vector<double> centroid_j(data[0].size(), 0.0);
@@ -54,10 +45,6 @@ double compute_cluster_dist(const std::vector<int>& cluster_i,
             d = euclidean(centroid_i, centroid_j);
             break;
         }
-        case Linkage::MEDIAN:
-            d = 0.0;
-            break;
-
         default:
             throw std::runtime_error("Unsupported linkage for serial mode");
     }
@@ -95,12 +82,17 @@ std::vector<std::array<double, 4>> hac_serial(
             if (cluster_nodes[i].empty()) continue;
             for (int j = i + 1; j < n; ++j) {
                 if (cluster_nodes[j].empty()) continue;
-                double d = compute_cluster_dist(
-                    cluster_nodes[i], cluster_nodes[j], dist, df, linkage);
-                if (d < best_d) {
-                    best_d = d;
-                    cluster_i = i;
-                    cluster_j = j;
+                try {
+                    double d = compute_cluster_dist(
+                        cluster_nodes[i], cluster_nodes[j], dist, df, linkage);
+                    if (d < best_d) {
+                        best_d = d;
+                        cluster_i = i;
+                        cluster_j = j;
+                    }
+                } catch(const std::runtime_error& e) {
+                    std::cerr << "[hac_serial] " << e.what() << " — skipping\n";
+                    return {};
                 }
             }
         }
