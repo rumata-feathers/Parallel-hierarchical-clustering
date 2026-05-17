@@ -18,6 +18,19 @@
 // ---------------------------------------------------------------
 
 static int n_failed = 0;
+static int g_step   = 0;
+static int g_total  = 0;  // set in main() before first test runs
+
+static void print_progress() {
+    const int width = 40;
+    int filled = (g_total > 0) ? width * g_step / g_total : 0;
+    int pct    = (g_total > 0) ? 100 * g_step / g_total   : 0;
+    std::cout << "  [";
+    for (int i = 0; i < width; ++i)
+        std::cout << (i < filled ? "█" : "░");
+    std::cout << "] " << g_step << '/' << g_total
+              << "  (" << pct << "%)\n";
+}
 
 #define CHECK(cond, msg)                                                   \
     do {                                                                   \
@@ -152,31 +165,198 @@ static void test_parallel_unsupported_linkage_does_not_crash() {
 }
 
 #ifdef ENABLE_CUDA
-static void test_cuda_matches_serial() {
-    std::cout << "[cuda] matches serial (two-cluster dataset)\n";
+
+// ---------------------------------------------------------------
+// Reference HAC (CPU) — implements all linkages so CUDA can be
+// validated even for linkages not yet in hac_serial.
+// Uses the same scanning order as hac_serial / hac_cuda so cluster
+// IDs match exactly when there are no distance ties.
+// ---------------------------------------------------------------
+static double compute_cluster_dist_ref(
+    const std::vector<int>& ci, const std::vector<int>& cj,
+    const std::vector<std::vector<double>>& dist,
+    const std::vector<std::vector<double>>& data,
+    Linkage linkage)
+{
+    if (ci.empty() || cj.empty()) return std::numeric_limits<double>::infinity();
+
+    switch (linkage) {
+        case Linkage::SINGLE: {
+            double d = std::numeric_limits<double>::infinity();
+            for (auto a : ci) for (auto b : cj) d = std::min(d, dist[a][b]);
+            return d;
+        }
+        case Linkage::COMPLETE: {
+            double d = 0.0;
+            for (auto a : ci) for (auto b : cj) d = std::max(d, dist[a][b]);
+            return d;
+        }
+        case Linkage::AVERAGE: {
+            double sum = 0.0;
+            for (auto a : ci) for (auto b : cj) sum += dist[a][b];
+            return sum / (double(ci.size()) * cj.size());
+        }
+        case Linkage::WARD: {
+            size_t dims = data[0].size();
+            std::vector<double> centi(dims, 0), centj(dims, 0);
+            for (auto a : ci) for (size_t d = 0; d < dims; ++d) centi[d] += data[a][d];
+            for (auto b : cj) for (size_t d = 0; d < dims; ++d) centj[d] += data[b][d];
+            double sq = 0.0;
+            for (size_t d = 0; d < dims; ++d) {
+                double diff = centi[d] / ci.size() - centj[d] / cj.size();
+                sq += diff * diff;
+            }
+            return std::sqrt(double(ci.size() * cj.size()) / (ci.size() + cj.size()) * sq);
+        }
+        case Linkage::CENTROID: {
+            size_t dims = data[0].size();
+            std::vector<double> centi(dims, 0), centj(dims, 0);
+            for (auto a : ci) for (size_t d = 0; d < dims; ++d) centi[d] += data[a][d];
+            for (auto b : cj) for (size_t d = 0; d < dims; ++d) centj[d] += data[b][d];
+            double sq = 0.0;
+            for (size_t d = 0; d < dims; ++d) {
+                double diff = centi[d] / ci.size() - centj[d] / cj.size();
+                sq += diff * diff;
+            }
+            return std::sqrt(sq);
+        }
+        case Linkage::MEDIAN: {
+            // Computed from scratch: centroid-to-centroid (same formula as CENTROID)
+            size_t dims = data[0].size();
+            std::vector<double> centi(dims, 0), centj(dims, 0);
+            for (auto a : ci) for (size_t d = 0; d < dims; ++d) centi[d] += data[a][d];
+            for (auto b : cj) for (size_t d = 0; d < dims; ++d) centj[d] += data[b][d];
+            double sq = 0.0;
+            for (size_t d = 0; d < dims; ++d) {
+                double diff = centi[d] / ci.size() - centj[d] / cj.size();
+                sq += diff * diff;
+            }
+            return std::sqrt(sq);
+        }
+    }
+    return std::numeric_limits<double>::infinity();
+}
+
+static std::vector<std::array<double, 4>> hac_ref(
+    const std::vector<std::vector<double>>& dist,
+    const std::vector<std::vector<double>>& data,
+    Linkage linkage)
+{
+    int n = static_cast<int>(dist.size());
+    std::vector<std::vector<int>> clusters(n);
+    for (int i = 0; i < n; ++i) clusters[i] = {i};
+    std::vector<int> id(n);
+    for (int i = 0; i < n; ++i) id[i] = i;
+    int next_id = n;
+
+    std::vector<std::array<double, 4>> result;
+    result.reserve(n - 1);
+
+    for (int step = 0; step < n - 1; ++step) {
+        double best_d = std::numeric_limits<double>::infinity();
+        int ci = -1, cj = -1;
+        for (int i = 0; i < n; ++i) {
+            if (clusters[i].empty()) continue;
+            for (int j = i + 1; j < n; ++j) {
+                if (clusters[j].empty()) continue;
+                double d = compute_cluster_dist_ref(
+                    clusters[i], clusters[j], dist, data, linkage);
+                if (d < best_d) { best_d = d; ci = i; cj = j; }
+            }
+        }
+        if (ci == -1) break;
+
+        result.push_back({double(id[ci]), double(id[cj]), best_d,
+                          double(clusters[ci].size() + clusters[cj].size())});
+        for (auto x : clusters[cj]) clusters[ci].push_back(x);
+        clusters[cj].clear();
+        id[ci] = next_id++;
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------
+// CUDA tests — each linkage compared against hac_ref.
+// The two-cluster dataset is used because it has no distance ties
+// for any linkage, so cluster IDs match the reference exactly.
+// ---------------------------------------------------------------
+
+static void test_cuda_linkage(Linkage linkage, const std::string& name) {
+    int before = n_failed;
+    std::cout << "[cuda] " << name << " linkage — two-cluster dataset\n";
     auto data = make_two_cluster_data();
     auto dist = compute_distance_matrix(data);
+    auto ref  = hac_ref(dist, data, linkage);
+    auto cuda = hac_cuda(dist, data, linkage);
+
+    CHECK(ref.size()  == size_t(5), name + " ref: expected 5 merges");
+    CHECK(cuda.size() == size_t(5), name + " cuda: expected 5 merges");
+    CHECK(matrices_equal(ref, cuda), name + " cuda matches reference");
+    if (n_failed == before) std::cout << "  PASS\n";
+}
+
+static void test_cuda_single_vs_serial() {
+    // Extra check: for SINGLE, CUDA must also match hac_serial exactly.
+    int before = n_failed;
+    std::cout << "[cuda] SINGLE matches hac_serial (three-cluster 2D dataset)\n";
+    auto data   = make_three_cluster_data();
+    auto dist   = compute_distance_matrix(data);
     auto serial = hac_serial(dist, data, Linkage::SINGLE);
-    auto cuda   = hac_cuda(dist, Linkage::SINGLE);
+    auto cuda   = hac_cuda(dist, data, Linkage::SINGLE);
 
     CHECK(!serial.empty(), "serial produced result");
     CHECK(!cuda.empty(),   "cuda produced result");
-    CHECK(matrices_equal(serial, cuda), "cuda result matches serial");
-    if (n_failed == 0) std::cout << "  PASS\n";
+    CHECK(matrices_equal(serial, cuda), "cuda matches hac_serial");
+    if (n_failed == before) std::cout << "  PASS\n";
 }
 
-static void test_cuda_three_clusters() {
-    std::cout << "[cuda] matches serial (three-cluster 2D dataset)\n";
-    auto data = make_three_cluster_data();
+static void test_cuda_centroid_vs_serial() {
+    // Extra check: for CENTROID, CUDA must also match hac_serial exactly.
+    int before = n_failed;
+    std::cout << "[cuda] CENTROID matches hac_serial (two-cluster dataset)\n";
+    auto data   = make_two_cluster_data();
+    auto dist   = compute_distance_matrix(data);
+    auto serial = hac_serial(dist, data, Linkage::CENTROID);
+    auto cuda   = hac_cuda(dist, data, Linkage::CENTROID);
+
+    CHECK(!serial.empty(), "serial produced result");
+    CHECK(!cuda.empty(),   "cuda produced result");
+    CHECK(matrices_equal(serial, cuda), "cuda matches hac_serial");
+    if (n_failed == before) std::cout << "  PASS\n";
+}
+
+static void test_cuda_result_is_valid_linkage_matrix() {
+    // Structural sanity: for each linkage the result must have exactly n-1
+    // rows, monotonically non-decreasing distances, and correct merged sizes.
+    int before = n_failed;
+    std::cout << "[cuda] structural validity for all linkages\n";
+    auto data = make_two_cluster_data();
     auto dist = compute_distance_matrix(data);
-    auto serial = hac_serial(dist, data, Linkage::SINGLE);
-    auto cuda   = hac_cuda(dist, Linkage::SINGLE);
+    int  n    = static_cast<int>(data.size());
 
-    CHECK(!serial.empty(), "serial produced result");
-    CHECK(!cuda.empty(),   "cuda produced result");
-    CHECK(matrices_equal(serial, cuda), "cuda result matches serial");
-    if (n_failed == 0) std::cout << "  PASS\n";
+    for (auto [lk, name] : std::vector<std::pair<Linkage, std::string>>{
+             {Linkage::SINGLE,   "single"},
+             {Linkage::COMPLETE, "complete"},
+             {Linkage::AVERAGE,  "average"},
+             {Linkage::WARD,     "ward"},
+             {Linkage::CENTROID, "centroid"},
+             {Linkage::MEDIAN,   "median"},
+         }) {
+        auto Z = hac_cuda(dist, data, lk);
+        CHECK(Z.size() == size_t(n - 1),
+              name + ": expected " + std::to_string(n - 1) + " merges, got " +
+              std::to_string(Z.size()));
+        for (size_t i = 0; i < Z.size(); ++i) {
+            CHECK(Z[i][2] >= 0.0, name + ": row " + std::to_string(i) + " distance < 0");
+            if (i > 0)
+                CHECK(Z[i][2] >= Z[i - 1][2] - 1e-9,
+                      name + ": distances not non-decreasing at row " + std::to_string(i));
+            CHECK(Z[i][3] >= 2.0, name + ": merged size < 2 at row " + std::to_string(i));
+        }
+    }
+    if (n_failed == before) std::cout << "  PASS\n";
 }
+
 #endif
 
 // ---------------------------------------------------------------
@@ -184,22 +364,44 @@ static void test_cuda_three_clusters() {
 // ---------------------------------------------------------------
 
 int main() {
-    std::cout << "=== HAC correctness tests ===\n\n";
+    g_total = 7;
+#ifdef ENABLE_CUDA
+    g_total += 9;
+#endif
+    std::cout << "=== HAC correctness tests ===  (" << g_total << " tests)\n\n";
 
-    test_serial_expected_output();
-    test_parallel_matches_serial(1);
-    test_parallel_matches_serial(2);
-    test_parallel_matches_serial(4);
-    test_parallel_three_clusters(2);
-    test_parallel_three_clusters(4);
-    test_parallel_unsupported_linkage_does_not_crash();
+// Print [n/total] header, run the test, then print the cumulative progress bar.
+#define RUN(call)                                          \
+    do {                                                   \
+        ++g_step;                                          \
+        std::cout << '[' << g_step << '/' << g_total << "] "; \
+        call;                                              \
+        print_progress();                                  \
+    } while (0)
+
+    RUN(test_serial_expected_output());
+    RUN(test_parallel_matches_serial(1));
+    RUN(test_parallel_matches_serial(2));
+    RUN(test_parallel_matches_serial(4));
+    RUN(test_parallel_three_clusters(2));
+    RUN(test_parallel_three_clusters(4));
+    RUN(test_parallel_unsupported_linkage_does_not_crash());
 
 #ifdef ENABLE_CUDA
-    test_cuda_matches_serial();
-    test_cuda_three_clusters();
+    RUN(test_cuda_linkage(Linkage::SINGLE,   "single"));
+    RUN(test_cuda_linkage(Linkage::COMPLETE, "complete"));
+    RUN(test_cuda_linkage(Linkage::AVERAGE,  "average"));
+    RUN(test_cuda_linkage(Linkage::WARD,     "ward"));
+    RUN(test_cuda_linkage(Linkage::CENTROID, "centroid"));
+    RUN(test_cuda_linkage(Linkage::MEDIAN,   "median"));
+    RUN(test_cuda_single_vs_serial());
+    RUN(test_cuda_centroid_vs_serial());
+    RUN(test_cuda_result_is_valid_linkage_matrix());
 #endif
 
-    std::cout << "\n";
+#undef RUN
+
+    std::cout << '\n';
     if (n_failed == 0)
         std::cout << "All tests passed.\n";
     else

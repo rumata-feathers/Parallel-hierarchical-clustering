@@ -24,6 +24,12 @@ import sys
 import os
 
 import numpy as np
+
+
+def _bar(step: int, total: int, width: int = 40) -> str:
+    filled = width * step // total if total else 0
+    pct    = 100 * step // total   if total else 0
+    return f"  [{'█' * filled}{'░' * (width - filled)}] {step}/{total}  ({pct}%)"
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -354,15 +360,17 @@ if __name__ == "__main__":
         print("Only serial timings found — nothing to compare.")
         sys.exit(0)
 
+    charts = [
+        ("scatter (log-log)",         lambda: plot_scatter(df, modes, plots_dir)),
+        ("speedup bars",              lambda: plot_speedup_bars(df, modes, plots_dir)),
+        ("speedup heatmap",           lambda: plot_speedup_heatmap(df, modes, plots_dir)),
+        ("scaling (wall time vs n)",  lambda: plot_scaling(df, modes, plots_dir)),
+    ]
+    total = len(charts)
     print(f"Modes detected: {[BASELINE] + modes}")
-    print("Plotting runtime scatter (log-log)...")
-    plot_scatter(df, modes, plots_dir)
+    print(f"Plotting {total} timing charts...\n")
 
-    print("Plotting speedup bars...")
-    plot_speedup_bars(df, modes, plots_dir)
-
-    print("Plotting speedup heatmap...")
-    plot_speedup_heatmap(df, modes, plots_dir)
-
-    print("Plotting scaling (wall time & speedup vs n)...")
-    plot_scaling(df, modes, plots_dir)
+    for step, (label, fn) in enumerate(charts, 1):
+        print(f"[{step}/{total}] {label}")
+        fn()
+        print(_bar(step, total))

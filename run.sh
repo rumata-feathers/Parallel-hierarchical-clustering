@@ -20,12 +20,29 @@ SYNTH_DIR="data/Clustering-Datasets/02. Synthetic"
 RESULTS_DIR="results"
 THREADS=4
 LINKAGES=(single complete average ward centroid median)
-CUDA=false   # set to true if built with -DENABLE_CUDA=ON
+CUDA=false  # set to true if built with -DENABLE_CUDA=ON
 
 SERIAL_DIR="$RESULTS_DIR/serial"
 PARALLEL_DIR="$RESULTS_DIR/parallel"
 CUDA_DIR="$RESULTS_DIR/cuda"
 LABELS_DIR="$RESULTS_DIR/labels"
+
+# ---------------------------------------------------------------
+# Progress bar helper
+# Usage: draw_bar <current> <total> <label>
+# Draws in-place using \r; call with a trailing \n after the loop.
+# ---------------------------------------------------------------
+draw_bar() {
+  local cur=$1 tot=$2 label=$3
+  local width=40
+  local filled=$(( width * cur / tot ))
+  local pct=$(( 100 * cur / tot ))
+  local bar='' i
+  for ((i = 0; i < width; i++)); do
+    [[ $i -lt $filled ]] && bar+='█' || bar+='░'
+  done
+  printf '\r  [%s] %3d%%  %d/%d  %-45s' "$bar" "$pct" "$cur" "$tot" "$label"
+}
 
 # ---------------------------------------------------------------
 # 0. Parse mode flag
@@ -91,7 +108,14 @@ source "$ENV_DIR/bin/activate"
 # 2. Build
 # ---------------------------------------------------------------
 echo "Building..."
-cmake -S . -B build && cmake --build build -j$THREADS
+# mkdir -p build && cd build && cmake .. && make -j$THREADS && cd ..
+if ($CUDA); then
+    echo "  with CUDA support"
+    cmake -S . -B build -DENABLE_CUDA=ON && cmake --build build -j$THREADS
+else
+    echo "  without CUDA support"
+    cmake -S . -B build && cmake --build build -j$THREADS
+fi
 
 # ---------------------------------------------------------------
 # 2.5. Correctness tests
@@ -102,7 +126,6 @@ echo "Running correctness tests..."
 # ---------------------------------------------------------------
 # 3. Execute (results split by mode)
 # ---------------------------------------------------------------
-echo "Running hac..."
 mkdir -p "$SERIAL_DIR" "$PARALLEL_DIR" "$LABELS_DIR"
 
 # Remove stale timings so old-format rows (5 cols, no n_points) can't mix
@@ -110,35 +133,51 @@ mkdir -p "$SERIAL_DIR" "$PARALLEL_DIR" "$LABELS_DIR"
 rm -f "$SERIAL_DIR/timings.csv" "$PARALLEL_DIR/timings.csv" \
       "$CUDA_DIR/timings.csv"  "$RESULTS_DIR/timings.csv"
 
+# Calculate total number of HAC invocations for the progress bar
+n_modes=2
+[ "$CUDA" = true ] && n_modes=3
+total_runs=$(( ${#csv_files[@]} * ${#LINKAGES[@]} * n_modes ))
+current=0
+
+echo "Running hac...  ($total_runs total runs)"
+draw_bar 0 "$total_runs" "starting..."
+
 for dataset in "${csv_files[@]}"; do
+  stem=$(basename "$dataset" .csv)
   for linkage in "${LINKAGES[@]}"; do
-    echo "  $(basename "$dataset")  [$linkage]  serial..."
+
+    (( current++ )) || true
+    draw_bar "$current" "$total_runs" "${stem}  [${linkage}]  serial"
     ./build/hac \
       --dataset  "$dataset" \
       --linkage  "$linkage" \
       --mode     serial \
       --out-dir  "$SERIAL_DIR" \
-      --save-labels
+      --save-labels > /dev/null
 
-    echo "  $(basename "$dataset")  [$linkage]  parallel (${THREADS} threads)..."
+    (( current++ )) || true
+    draw_bar "$current" "$total_runs" "${stem}  [${linkage}]  parallel"
     ./build/hac \
       --dataset  "$dataset" \
       --linkage  "$linkage" \
       --mode     parallel \
       --threads  "$THREADS" \
-      --out-dir  "$PARALLEL_DIR"
+      --out-dir  "$PARALLEL_DIR" > /dev/null
 
     if [ "$CUDA" = true ]; then
       mkdir -p "$CUDA_DIR"
-      echo "  $(basename "$dataset")  [$linkage]  cuda..."
+      (( current++ )) || true
+      draw_bar "$current" "$total_runs" "${stem}  [${linkage}]  cuda"
       ./build/hac \
         --dataset  "$dataset" \
         --linkage  "$linkage" \
         --mode     cuda \
-        --out-dir  "$CUDA_DIR"
+        --out-dir  "$CUDA_DIR" > /dev/null
     fi
+
   done
 done
+printf '\n'  # end the progress bar line
 
 # ---------------------------------------------------------------
 # 4. Reorganise: move labels, merge timings

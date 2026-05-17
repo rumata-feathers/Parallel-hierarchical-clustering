@@ -7,12 +7,12 @@
 #include "hac/distance.hpp"
 #include "hac/hac_parallel.hpp"
 #include "hac/hac_serial.hpp"
-#ifdef ENABLE_CUDA
-#include "hac/hac_cuda.hpp"
-#endif
 #include "hac/linkage.hpp"
 #include "io/data_loader.hpp"
 #include "io/output_writer.hpp"
+#ifdef ENABLE_CUDA
+#include "hac/hac_cuda.hpp"
+#endif
 
 namespace fs = std::filesystem;
 
@@ -86,7 +86,7 @@ int main(int argc, char** argv) {
         result = hac_parallel(distances, df.features, linkage, n_threads);
     } else if (mode == "cuda") {
 #ifdef ENABLE_CUDA
-        result = hac_cuda(distances, linkage);
+        result = hac_cuda(distances, df.features, linkage);
 #else
         std::cerr << "Binary was built without CUDA support. "
                      "Rebuild with -DENABLE_CUDA=ON.\n";

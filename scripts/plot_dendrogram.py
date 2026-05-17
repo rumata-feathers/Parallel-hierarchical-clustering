@@ -13,6 +13,12 @@ import os
 import glob
 
 import numpy as np
+
+
+def _bar(step: int, total: int, width: int = 40) -> str:
+    filled = width * step // total if total else 0
+    pct    = 100 * step // total   if total else 0
+    return f"  [{'█' * filled}{'░' * (width - filled)}] {step}/{total}  ({pct}%)"
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -161,8 +167,14 @@ if __name__ == "__main__":
         print(f"No serial linkage CSV files found in {results_dir}/")
         sys.exit(1)
 
-    for csv_path in files:
+    total = len(files)
+    print(f"Plotting {total} dendrograms...\n")
+
+    for step, csv_path in enumerate(files, 1):
+        label = os.path.basename(csv_path).replace("_serial_linkage.csv", "")
+        print(f"[{step}/{total}] {label}")
         try:
             plot_one(csv_path, plots_dir, data_dir)
         except Exception as e:
-            print(f"  error on {os.path.basename(csv_path)}: {e}")
+            print(f"  error: {e}")
+        print(_bar(step, total))
