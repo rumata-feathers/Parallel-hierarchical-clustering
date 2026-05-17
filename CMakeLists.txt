@@ -47,3 +47,27 @@ if(ENABLE_CUDA)
     target_compile_definitions(hac PRIVATE ENABLE_CUDA)
     target_compile_options(hac PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O2 --expt-relaxed-constexpr>)
 endif()
+
+# ---------------------------------------------------------------
+# Correctness tests
+# ---------------------------------------------------------------
+set(TEST_SOURCES
+    tests/test_correctness.cpp
+    src/hac/hac_serial.cpp
+    src/hac/hac_parallel.cpp
+)
+if(ENABLE_CUDA)
+    list(APPEND TEST_SOURCES src/hac/hac_cuda.cu)
+endif()
+
+add_executable(test_hac ${TEST_SOURCES})
+target_include_directories(test_hac PRIVATE src)
+target_link_libraries(test_hac PRIVATE OpenMP::OpenMP_CXX)
+target_compile_options(test_hac PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-O2 -Wall>)
+if(ENABLE_CUDA)
+    target_compile_definitions(test_hac PRIVATE ENABLE_CUDA)
+    target_compile_options(test_hac PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-O2 --expt-relaxed-constexpr>)
+endif()
+
+enable_testing()
+add_test(NAME correctness COMMAND test_hac)
