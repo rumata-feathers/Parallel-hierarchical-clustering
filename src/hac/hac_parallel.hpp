@@ -4,7 +4,11 @@
 
 #include "linkage.hpp"
 
-// Returns the (n-1) x 4 linkage matrix: {cluster_i, cluster_j, distance,
-// merged_size}
+/*
+    * @param dist : n x n distance matrix
+    * @param linkage : linkage criterion
+    * @param n_threads : number of threads to use
+    * @returns (n-1) x 4 linkage matrix: {cluster_i, cluster_j, distance, merged_size}
+*/
 std::vector<std::array<double, 4>> hac_parallel(
-    std::vector<std::vector<double>> dist, Linkage linkage, int n_threads);
+    const std::vector<std::vector<double>>& dist, const std::vector<std::vector<double>>& data,  Linkage linkage, int n_threads);
