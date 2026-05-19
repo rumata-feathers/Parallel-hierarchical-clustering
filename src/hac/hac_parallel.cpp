@@ -8,24 +8,47 @@
 
 #include "distance.hpp"
 
-static double compute_cluster_dist(const std::vector<int>& cluster_i,
-                                   const std::vector<int>& cluster_j,
-                                   const std::vector<std::vector<double>>& dist,
-                                   const std::vector<std::vector<double>>& data,
-                                   Linkage linkage) {
+static double compute_cluster_dist(const std::vector<int> &cluster_i,
+                                   const std::vector<int> &cluster_j,
+                                   const std::vector<std::vector<double>> &dist,
+                                   const std::vector<std::vector<double>> &data,
+                                   Linkage linkage)
+{
     if (cluster_i.empty() || cluster_j.empty())
         return std::numeric_limits<double>::infinity();
 
-    switch (linkage) {
-        case Linkage::SINGLE: {
-            double d = std::numeric_limits<double>::infinity();
-            for (auto a : cluster_i)
-                for (auto b : cluster_j)
-                    d = std::min(d, dist[a][b]);
-            return d;
+    switch (linkage)
+    {
+    case Linkage::SINGLE:
+    {
+        double d = std::numeric_limits<double>::infinity();
+        for (auto a : cluster_i)
+            for (auto b : cluster_j)
+                d = std::min(d, dist[a][b]);
+        return d;
+    }
+    case Linkage::CENTROID:
+    {
+        std::vector<double> centroid_i(data[0].size(), 0.0);
+        std::vector<double> centroid_j(data[0].size(), 0.0);
+
+        for (auto idx : cluster_i)
+            for (size_t d = 0; d < data[0].size(); ++d)
+                centroid_i[d] += data[idx][d];
+        for (auto idx : cluster_j)
+            for (size_t d = 0; d < data[0].size(); ++d)
+                centroid_j[d] += data[idx][d];
+
+        for (size_t d = 0; d < data[0].size(); ++d)
+        {
+            centroid_i[d] /= cluster_i.size();
+            centroid_j[d] /= cluster_j.size();
         }
-        default:
-            throw std::runtime_error("Unsupported linkage for parallel mode");
+
+        return euclidean(centroid_i, centroid_j);
+    }
+    default:
+        throw std::runtime_error("Unsupported linkage for parallel mode");
     }
 }
 
@@ -37,25 +60,28 @@ static double compute_cluster_dist(const std::vector<int>& cluster_i,
  * @returns (n-1) x 4 linkage matrix: {cluster_i, cluster_j, distance, merged_size}
  */
 std::vector<std::array<double, 4>> hac_parallel(
-    const std::vector<std::vector<double>>& dist,
-    const std::vector<std::vector<double>>& data,
-    Linkage linkage, int n_threads) {
-        // same logic as with serial
-        // just adding threads to compute distances in parallel
-        // also I realised, that I need some comments to understand what im writing, so I'll do it here and eventually will comment all
+    const std::vector<std::vector<double>> &dist,
+    const std::vector<std::vector<double>> &data,
+    Linkage linkage, int n_threads)
+{
+    // same logic as with serial
+    // just adding threads to compute distances in parallel
+    // also I realised, that I need some comments to understand what im writing, so I'll do it here and eventually will comment all
 
     int n = static_cast<int>(dist.size());
 
     // initialy each node is its own cluster
     std::vector<std::vector<int>> cluster_nodes(n);
-    for (int i = 0; i < n; ++i) cluster_nodes[i] = {i};
+    for (int i = 0; i < n; ++i)
+        cluster_nodes[i] = {i};
 
-    //active[i] = false means that cluster i is already merged into another cluster
+    // active[i] = false means that cluster i is already merged into another cluster
     std::vector<bool> active(n, true);
 
     // id[i] - id of the cluster at node n
     std::vector<int> id(n);
-    for (int i = 0; i < n; ++i) id[i] = i;
+    for (int i = 0; i < n; ++i)
+        id[i] = i;
     int next_id = n;
 
     std::vector<std::array<double, 4>> result;
@@ -63,19 +89,22 @@ std::vector<std::array<double, 4>> hac_parallel(
 
     // pre-allocated per thread outputs
     std::vector<double> t_best(n_threads);
-    std::vector<int>    t_ci(n_threads), t_cj(n_threads);
+    std::vector<int> t_ci(n_threads), t_cj(n_threads);
     std::vector<std::thread> threads(n_threads);
     // atomic boolean to track if linkage not supported
     std::atomic<bool> unsupported{false};
 
-    for (int step = 0; step < n - 1; ++step) {
+    for (int step = 0; step < n - 1; ++step)
+    {
         int chunk = (n + n_threads - 1) / n_threads;
 
-        for (int t = 0; t < n_threads; ++t) {
+        for (int t = 0; t < n_threads; ++t)
+        {
             int row_start = t * chunk;
-            int row_end   = std::min(row_start + chunk, n);
+            int row_end = std::min(row_start + chunk, n);
 
-            threads[t] = std::thread([&, t, row_start, row_end]() {
+            threads[t] = std::thread([&, t, row_start, row_end]()
+                                     {
                 double best = std::numeric_limits<double>::infinity();
                 int ci = -1, cj = -1;
 
@@ -100,33 +129,35 @@ std::vector<std::array<double, 4>> hac_parallel(
 
                 t_best[t] = best;
                 t_ci[t]   = ci;
-                t_cj[t]   = cj;
-            });
+                t_cj[t]   = cj; });
         }
 
-        for (auto& th : threads) th.join();
+        for (auto &th : threads)
+            th.join();
 
-        if (unsupported) return {};
+        if (unsupported)
+            return {};
 
         // find closest clusters
         double best_d = std::numeric_limits<double>::infinity();
         int ci = -1, cj = -1;
-        for (int t = 0; t < n_threads; ++t) {
-            if (t_best[t] < best_d) {
+        for (int t = 0; t < n_threads; ++t)
+        {
+            if (t_best[t] < best_d)
+            {
                 best_d = t_best[t];
-                ci     = t_ci[t];
-                cj     = t_cj[t];
+                ci = t_ci[t];
+                cj = t_cj[t];
             }
         }
         // no clusters -> done
-        if (ci == -1 || cj == -1) break;
+        if (ci == -1 || cj == -1)
+            break;
 
-        result.push_back({
-            static_cast<double>(id[ci]),
-            static_cast<double>(id[cj]),
-            best_d,
-            static_cast<double>(cluster_nodes[ci].size() + cluster_nodes[cj].size())
-        });
+        result.push_back({static_cast<double>(id[ci]),
+                          static_cast<double>(id[cj]),
+                          best_d,
+                          static_cast<double>(cluster_nodes[ci].size() + cluster_nodes[cj].size())});
 
         // merge
         for (auto node : cluster_nodes[cj])
