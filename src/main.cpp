@@ -7,12 +7,12 @@
 #include "hac/distance.hpp"
 #include "hac/hac_parallel.hpp"
 #include "hac/hac_serial.hpp"
-#ifdef ENABLE_CUDA
-#include "hac/hac_cuda.hpp"
-#endif
 #include "hac/linkage.hpp"
 #include "io/data_loader.hpp"
 #include "io/output_writer.hpp"
+#ifdef ENABLE_CUDA
+#include "hac/hac_cuda.hpp"
+#endif
 
 namespace fs = std::filesystem;
 
@@ -81,12 +81,12 @@ int main(int argc, char** argv) {
     // let's go baby
     std::vector<std::array<double, 4>> result;
     if (mode == "serial") {
-        result = hac_serial(distances, linkage);
+        result = hac_serial(distances, df.features, linkage);
     } else if (mode == "parallel") {
-        result = hac_parallel(distances, linkage, n_threads);
+        result = hac_parallel(distances, df.features, linkage, n_threads);
     } else if (mode == "cuda") {
 #ifdef ENABLE_CUDA
-        result = hac_cuda(distances, linkage);
+        result = hac_cuda(distances, df.features, linkage);
 #else
         std::cerr << "Binary was built without CUDA support. "
                      "Rebuild with -DENABLE_CUDA=ON.\n";
@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
         write_labels(df.labels, out_dir + "/" + stem + "_labels.csv");
 
     append_timing(out_dir + "/timings.csv", stem, linkage_str, mode, n_threads,
-                  wall);
+                  static_cast<int>(df.features.size()), wall);
 
     std::cout << "Done [" << mode << "/" << linkage_str << "] " << wall
               << " ms  →  " << linkage_matrix_path << "\n";
