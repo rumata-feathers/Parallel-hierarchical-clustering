@@ -20,7 +20,7 @@ SYNTH_DIR="data/Clustering-Datasets/02. Synthetic"
 RESULTS_DIR="results"
 THREADS=4
 LINKAGES=(single complete average ward centroid median)
-CUDA=false  # set to true if built with -DENABLE_CUDA=ON
+CUDA=true  # set to true if built with -DENABLE_CUDA=ON
 
 SERIAL_DIR="$RESULTS_DIR/serial"
 PARALLEL_DIR="$RESULTS_DIR/parallel"

@@ -45,6 +45,23 @@ double compute_cluster_dist(const std::vector<int>& cluster_i,
             d = euclidean(centroid_i, centroid_j);
             break;
         }
+        case Linkage::COMPLETE: {
+            double d = 0.0;
+            for (auto a : cluster_i)
+                for (auto b : cluster_j)
+                    d = std::max(d, dist[a][b]);
+            return d;
+        }
+        case Linkage::AVERAGE: {
+            double sum = 0.0;
+            int count = 0;
+            for (auto a : cluster_i)
+                for (auto b : cluster_j) {
+                    sum += dist[a][b];
+                    ++count;
+                }
+            return sum / count;
+        }
         default:
             throw std::runtime_error("Unsupported linkage for serial mode");
     }

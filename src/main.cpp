@@ -21,7 +21,7 @@ void usage(const char* prog){
     << "Usage: " << prog << "\n"
     << "  --dataset  <path.csv>                      input file\n"
     << "  --linkage  single|complete|average|ward|centroid|median\n"
-    << "  --mode     serial|parallel\n"
+    << "  --mode     serial|parallel|cuda\n"
     << "  --out-dir  <dir>                            output directory\n"
     << "  --threads  <n>                              (parallel mode, default "
        "4)\n";}
