@@ -1,7 +1,4 @@
-.DS_Store
-
-build/*
+env/
 build/
-
-results/
-results/*
+__pycache__/
+*.pyc

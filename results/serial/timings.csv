@@ -1,0 +1,2 @@
+dataset,linkage,mode,threads,n_points,wall_ms
+zelnik6,single,serial,4,238,13.76
