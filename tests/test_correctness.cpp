@@ -154,13 +154,17 @@ static void test_parallel_three_clusters(int n_threads) {
     if (n_failed == 0) std::cout << "  PASS\n";
 }
 
-static void test_parallel_unsupported_linkage_does_not_crash() {
-    std::cout << "[parallel] unsupported linkage returns empty without crash\n";
+static void test_parallel_ward_matches_serial() {
+    std::cout << "[parallel] ward linkage matches serial (two-cluster dataset)\n";
     auto data = make_two_cluster_data();
     auto dist = compute_distance_matrix(data);
-    // COMPLETE is not implemented in parallel — must return {} gracefully
-    auto result = hac_parallel(dist, data, Linkage::COMPLETE, 2);
-    CHECK(result.empty(), "unsupported linkage returns empty result");
+    auto serial   = hac_serial(dist, data, Linkage::WARD);
+    auto parallel = hac_parallel(dist, data, Linkage::WARD, 2);
+
+    CHECK(!serial.empty(),   "serial produced result");
+    CHECK(!parallel.empty(), "parallel produced result");
+    CHECK(matrices_equal(serial, parallel),
+          "parallel ward result matches serial");
     if (n_failed == 0) std::cout << "  PASS\n";
 }
 
@@ -385,7 +389,7 @@ int main() {
     RUN(test_parallel_matches_serial(4));
     RUN(test_parallel_three_clusters(2));
     RUN(test_parallel_three_clusters(4));
-    RUN(test_parallel_unsupported_linkage_does_not_crash());
+    RUN(test_parallel_ward_matches_serial());
 
 #ifdef ENABLE_CUDA
     RUN(test_cuda_linkage(Linkage::SINGLE,   "single"));

@@ -91,9 +91,9 @@ __global__ void pairwise_point_linkage_kernel(
 }
 
 
-// centroid
+// centroid/ward/median
 
-__global__ void pairwise_centroid_kernel( const double* centroids, const int* active, int n, int dim, double* out){
+__global__ void pairwise_centroid_kernel( const double* centroids, const int* active, const int* cluster_sizes, int n, int dim, int linkage_type, double* out){
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int j = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -108,8 +108,14 @@ __global__ void pairwise_centroid_kernel( const double* centroids, const int* ac
         double diff = centroids[i * dim + k] - centroids[j * dim + k];
         sum += diff * diff;
     }
-
+    if (linkage_type == 1) {
+        // ward: sqrt(ni * nj / (ni + nj) * ||ci - cj||^2)
+        double ni = static_cast<double>(cluster_sizes[i]);
+        double nj = static_cast<double>(cluster_sizes[j]);
+        out[i * n + j] = sqrt(ni * nj / (ni + nj) * sum);
+    } else {
     out[i * n + j] = sqrt(sum);
+    }
 }
 
 __global__ void find_min_kernel(
@@ -180,9 +186,7 @@ static std::vector<double> flatten_matrix( const std::vector<std::vector<double>
 }
 
 std::vector<std::array<double, 4>> hac_cuda( std::vector<std::vector<double>> dist, const std::vector<std::vector<double>>& data, Linkage linkage){
-    if (linkage == Linkage::WARD || linkage == Linkage::MEDIAN) {
-        throw std::runtime_error("WARD and MEDIAN are not supported in CUDA mode yet"); // vlada change once implemented
-    }
+
 
     const int n = static_cast<int>(dist.size());
     const int dim = data.empty() ? 0 : static_cast<int>(data[0].size());
@@ -194,7 +198,9 @@ std::vector<std::array<double, 4>> hac_cuda( std::vector<std::vector<double>> di
         linkage == Linkage::COMPLETE ||
         linkage == Linkage::AVERAGE;
 
-    bool centroid_based = linkage == Linkage::CENTROID;
+    bool centroid_based = linkage == Linkage::CENTROID ||
+                          linkage == Linkage::WARD ||
+                          linkage == Linkage::MEDIAN;
 
     double* d_point_dist = nullptr;
     double* d_D = nullptr;
@@ -207,7 +213,7 @@ std::vector<std::array<double, 4>> hac_cuda( std::vector<std::vector<double>> di
     int* d_cluster_points = nullptr;
     int* d_block_i = nullptr;
     int* d_block_j = nullptr;
-
+    int* d_cluster_sizes_centroid = nullptr;
     const int REDUCE_BLOCK = 256;
     const int REDUCE_GRID = std::max(1, (n * n + REDUCE_BLOCK - 1) / REDUCE_BLOCK);
 
@@ -228,6 +234,7 @@ std::vector<std::array<double, 4>> hac_cuda( std::vector<std::vector<double>> di
 
     if (centroid_based) {
         CUDA_CHECK(cudaMalloc(&d_centroids, (size_t)n * dim * sizeof(double)));
+        CUDA_CHECK(cudaMalloc(&d_cluster_sizes_centroid, n * sizeof(int)));
     }
 
     std::vector<std::vector<int>> clusters(n);
@@ -281,6 +288,10 @@ std::vector<std::array<double, 4>> hac_cuda( std::vector<std::vector<double>> di
 
         if (centroid_based) {
             CUDA_CHECK(cudaMemcpy(d_centroids, centroids.data(), (size_t)n * dim * sizeof(double),cudaMemcpyHostToDevice));
+            std::vector<int> csizes(n);
+            for (int i = 0; i < n; ++i)
+                csizes[i] = static_cast<int>(clusters[i].size());
+            CUDA_CHECK(cudaMemcpy(d_cluster_sizes_centroid, csizes.data(), n * sizeof(int), cudaMemcpyHostToDevice));
         }
 
         dim3 block2d(16, 16);
@@ -301,11 +312,16 @@ std::vector<std::array<double, 4>> hac_cuda( std::vector<std::vector<double>> di
                 linkage_type,
                 d_D);
         } else {
+            int centroid_linkage_type = 0;
+            if (linkage == Linkage::WARD) centroid_linkage_type = 1;
+            if (linkage == Linkage::MEDIAN) centroid_linkage_type = 2;
             pairwise_centroid_kernel<<<grid2d, block2d>>>(
                 d_centroids,
                 d_active,
+                d_cluster_sizes_centroid,
                 n,
                 dim,
+                centroid_linkage_type,
                 d_D);
         }
 
@@ -379,6 +395,7 @@ std::vector<std::array<double, 4>> hac_cuda( std::vector<std::vector<double>> di
     cudaFree(d_cluster_start);
     cudaFree(d_cluster_size);
     cudaFree(d_cluster_points);
+    cudaFree(d_cluster_sizes_centroid);
     cudaFree(d_block_val);
     cudaFree(d_block_i);
     cudaFree(d_block_j);

@@ -67,8 +67,38 @@ static double compute_cluster_dist(const std::vector<int> &cluster_i,
             }
         return sum / count;
     }
-
-
+    case Linkage::WARD:
+    {
+        size_t dims = data[0].size();
+        std::vector<double> centi(dims, 0.0), centj(dims, 0.0);
+        for (auto idx : cluster_i)
+            for (size_t d = 0; d < dims; ++d) centi[d] += data[idx][d];
+        for (auto idx : cluster_j)
+            for (size_t d = 0; d < dims; ++d) centj[d] += data[idx][d];
+        double sq = 0.0;
+        for (size_t d = 0; d < dims; ++d) {
+            double diff = centi[d] / cluster_i.size() - centj[d] / cluster_j.size();
+            sq += diff * diff;
+        }
+        double ni = static_cast<double>(cluster_i.size());
+        double nj = static_cast<double>(cluster_j.size());
+        return std::sqrt(ni * nj / (ni + nj) * sq);
+    }
+    case Linkage::MEDIAN:
+    {
+        
+        size_t dims = data[0].size();
+        std::vector<double> centi(dims, 0.0), centj(dims, 0.0);
+        for (auto idx : cluster_i)
+            for (size_t d = 0; d < dims; ++d) centi[d] += data[idx][d];
+        for (auto idx : cluster_j)
+            for (size_t d = 0; d < dims; ++d) centj[d] += data[idx][d];
+        for (size_t d = 0; d < dims; ++d) {
+            centi[d] /= cluster_i.size();
+            centj[d] /= cluster_j.size();
+        }
+        return euclidean(centi, centj);
+    }
     default:
         throw std::runtime_error("Unsupported linkage for parallel mode");
     }
