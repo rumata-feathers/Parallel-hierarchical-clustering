@@ -247,12 +247,18 @@ static std::vector<std::array<double, 4>> hac_ref(
     Linkage linkage)
 {
     int n = static_cast<int>(dist.size());
+    int dims = data.empty() ? 0 : static_cast<int>(data[0].size());
     std::vector<std::vector<int>> clusters(n);
     for (int i = 0; i < n; ++i) clusters[i] = {i};
     std::vector<int> id(n);
     for (int i = 0; i < n; ++i) id[i] = i;
     int next_id = n;
-
+// for median we track cluster centers (unweighted average)
+// rather than recomputing from raw points
+    std::vector<std::vector<double>> centers(n, std::vector<double>(dims, 0.0));
+    if (linkage == Linkage::MEDIAN) {
+        for (int i = 0; i < n; ++i) centers[i] = data[i];
+    }
     std::vector<std::array<double, 4>> result;
     result.reserve(n - 1);
 
@@ -263,8 +269,19 @@ static std::vector<std::array<double, 4>> hac_ref(
             if (clusters[i].empty()) continue;
             for (int j = i + 1; j < n; ++j) {
                 if (clusters[j].empty()) continue;
-                double d = compute_cluster_dist_ref(
-                    clusters[i], clusters[j], dist, data, linkage);
+                double d;
+                if (linkage == Linkage::MEDIAN) {
+                    // distance between stored median centers
+                    double sq = 0.0;
+                    for (int k = 0; k < dims; ++k) {
+                        double diff = centers[i][k] - centers[j][k];
+                        sq += diff * diff;
+                    }
+                    d = std::sqrt(sq);
+                } else {
+                    d = compute_cluster_dist_ref(
+                        clusters[i], clusters[j], dist, data, linkage);
+                }
                 if (d < best_d) { best_d = d; ci = i; cj = j; }
             }
         }
@@ -272,6 +289,13 @@ static std::vector<std::array<double, 4>> hac_ref(
 
         result.push_back({double(id[ci]), double(id[cj]), best_d,
                           double(clusters[ci].size() + clusters[cj].size())});
+                          
+        // update median center: unweighted average                         
+        if (linkage == Linkage::MEDIAN) {
+            for (int k = 0; k < dims; ++k)
+                centers[ci][k] = (centers[ci][k] + centers[cj][k]) / 2.0;
+        }
+        
         for (auto x : clusters[cj]) clusters[ci].push_back(x);
         clusters[cj].clear();
         id[ci] = next_id++;
