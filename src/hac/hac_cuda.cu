@@ -144,7 +144,9 @@ __global__ void find_min_kernel(
 
         if (i < j) {
             double d = D[idx];
-            if (d < best) {
+            bool better = d < best ||
+              (d == best && (i < bi || (i == bi && j < bj)));
+            if (better) {
                 best = d;
                 bi = i;
                 bj = j;
@@ -159,11 +161,18 @@ __global__ void find_min_kernel(
     __syncthreads();
 
     for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
-        if (tid < stride && s_val[tid + stride] < s_val[tid]) {
+        if (tid < stride) {
+        bool take = s_val[tid + stride] < s_val[tid] ||
+                    (s_val[tid + stride] == s_val[tid] &&
+                    (s_i[tid + stride] < s_i[tid] ||
+                    (s_i[tid + stride] == s_i[tid] &&
+                    s_j[tid + stride] < s_j[tid])));
+        if (take) {
             s_val[tid] = s_val[tid + stride];
-            s_i[tid] = s_i[tid + stride];
-            s_j[tid] = s_j[tid + stride];
+            s_i[tid]   = s_i[tid + stride];
+            s_j[tid]   = s_j[tid + stride];
         }
+    }
         __syncthreads();
     }
 
@@ -352,12 +361,16 @@ std::vector<std::array<double, 4>> hac_cuda( std::vector<std::vector<double>> di
         int cj = -1;
 
         for (int b = 0; b < REDUCE_GRID; ++b) {
-            if (h_block_val[b] < best_d) {
-                best_d = h_block_val[b];
-                ci = h_block_i[b];
-                cj = h_block_j[b];
-            }
+        bool take = h_block_val[b] < best_d ||
+                    (h_block_val[b] == best_d &&
+                    (h_block_i[b] < ci ||
+                    (h_block_i[b] == ci && h_block_j[b] < cj)));
+        if (take) {
+            best_d = h_block_val[b];
+            ci = h_block_i[b];
+            cj = h_block_j[b];
         }
+    }
 
         if (ci == -1 || cj == -1 || best_d >= INF / 2){
             break;
