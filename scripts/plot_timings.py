@@ -464,15 +464,15 @@ if __name__ == "__main__":
     if not modes:
         print("Only serial timings found — nothing to compare.")
         sys.exit(0)
-
-charts = [
+    charts = [
         ("grouped bar (wall time)",   lambda: plot_grouped_bar(df, modes, plots_dir)),
         ("speedup heatmap",           lambda: plot_speedup_heatmap(df, modes, plots_dir)),
         ("scaling (wall time vs n)",  lambda: plot_scaling(df, modes, plots_dir)),
         ("scatter (log-log)",         lambda: plot_scatter(df, modes, plots_dir)),
         ("speedup bars",              lambda: plot_speedup_bars(df, modes, plots_dir)),
         ("thread scaling",            lambda: plot_thread_scaling(results_dir, plots_dir)),
-    ]
+    ] 
+
     total = len(charts)
     print(f"Modes detected: {[BASELINE] + modes}")
     print(f"Plotting {total} timing charts...\n")
