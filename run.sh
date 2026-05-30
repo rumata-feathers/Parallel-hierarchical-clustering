@@ -52,23 +52,14 @@ MODE="${1:---full}"
 case "$MODE" in
   --small)
     SMALL_SETS=(
-      "insect.csv"
-      "gaussians1.csv"
-      "hepta.csv"
       "zelnik6.csv"
-      "flame.csv"
-      "spherical_5_2.csv"
-      "pearl.csv"
-      "zelnik3.csv"
       "zelnik1.csv"
-      "blobs.csv"
-      "pathbased.csv"
-      "spherical_6_2.csv"
-      "zelnik2.csv"
-      "3-spiral.csv"
-      "jain.csv"
-      "compound.csv"
       "3MC.csv"
+      "target.csv"
+      "2spiral.csv"
+      "smile2.csv"
+      "diamond9.csv"
+      "complex9.csv"
     )
     csv_files=()
     for name in "${SMALL_SETS[@]}"; do
