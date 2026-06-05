@@ -47,52 +47,45 @@ std::vector<std::tuple<int, int, double, int>> hac_parallel(
     std::vector<double> t_best(n_threads);
     std::vector<int> t_ci(n_threads), t_cj(n_threads);
     std::vector<std::thread> threads(n_threads);
-    // atomic boolean to track if linkage not supported
-    std::atomic<bool> unsupported{false};
+    std::atomic<int> next_row{0};
+
 
     for (int step = 0; step < n - 1; ++step)
     {
-        int chunk = (n + n_threads - 1) / n_threads;
+        next_row = 0;
 
         for (int t = 0; t < n_threads; ++t)
         {
-            int row_start = t * chunk;
-            int row_end = std::min(row_start + chunk, n);
-
-            threads[t] = std::thread([&, t, row_start, row_end]()
-                                     {
+            threads[t] = std::thread([&, t]()
+            {
                 double best = std::numeric_limits<double>::infinity();
                 int ci = -1, cj = -1;
 
-                for (int i = row_start; i < row_end; ++i) {
+                int i;
+
+                while ((i = next_row.fetch_add(1)) < n) {
                     if (!active[i]) continue;
-                    for (int j = i + 1; j < n; ++j) {
+                    for (int k = 1; k <= n / 2; ++k) {
+                        int j = (i + k) % n;
                         if (!active[j]) continue;
-                        // try-bloack with atomic boolean
-                        // if fails -> mark boolean
-                        try {
-                            double d = compute_cluster_dist(
-                                cluster_nodes[i], cluster_nodes[j], dist, data, linkage);
-                            if (d < best) { best = d; ci = i; cj = j; }
-                        } catch (const std::runtime_error& e) {
-                            if (!unsupported.exchange(true))
-                                std::cerr << "[hac_parallel] " << e.what()
-                                          << " — skipping\n";
-                            return;
-                        }
+                        int a = std::min(i, j);
+                        int b = std::max(i, j);
+                        if (a == b) continue;
+                        double d = compute_cluster_dist(
+                            cluster_nodes[a], cluster_nodes[b], dist, data, linkage);
+                        if (d < best) { best = d; ci = a; cj = b; }
                     }
                 }
 
                 t_best[t] = best;
                 t_ci[t]   = ci;
-                t_cj[t]   = cj; });
+                t_cj[t]   = cj;
+            });
         }
 
         for (auto &th : threads)
             th.join();
 
-        if (unsupported)
-            return {};
 
         // find closest clusters
         double best_d = std::numeric_limits<double>::infinity();
