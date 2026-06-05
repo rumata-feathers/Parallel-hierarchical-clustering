@@ -4,16 +4,16 @@
 #include <iomanip>
 #include <stdexcept>
 
-void write_linkage_matrix(const std::vector<std::array<double, 4>>& matrix,
+void write_linkage_matrix(const std::vector<std::tuple<int, int, double, int>>& matrix,
                           const std::string& path) {
     std::ofstream f(path);
     if (!f) throw std::runtime_error("Cannot write: " + path);
 
     f << "cluster_i,cluster_j,distance,count\n";
     for (const auto& row : matrix) {
-        f << static_cast<int>(row[0]) << "," << static_cast<int>(row[1]) << ","
-          << std::fixed << std::setprecision(6) << row[2] << ","
-          << static_cast<int>(row[3]) << "\n";
+        f << static_cast<int>(std::get<0>(row)) << "," << static_cast<int>(std::get<1>(row)) << ","
+          << std::fixed << std::setprecision(6) << std::get<2>(row) << ","
+          << static_cast<int>(std::get<3>(row)) << "\n";
     }
 }
 

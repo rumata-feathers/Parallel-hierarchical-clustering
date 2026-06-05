@@ -15,7 +15,7 @@
  * @param n_threads : number of std::thread workers
  * @returns (n-1) x 4 linkage matrix: {cluster_i, cluster_j, distance, merged_size}
  */
-std::vector<std::array<double, 4>> hac_parallel(
+std::vector<std::tuple<int, int, double, int>> hac_parallel(
     const std::vector<std::vector<double>> &dist,
     const std::vector<std::vector<double>> &data,
     Linkage linkage, int n_threads)
@@ -40,7 +40,7 @@ std::vector<std::array<double, 4>> hac_parallel(
         id[i] = i;
     int next_id = n;
 
-    std::vector<std::array<double, 4>> result;
+    std::vector<std::tuple<int, int, double, int>> result;
     result.reserve(n - 1);
 
     // pre-allocated per thread outputs
@@ -110,10 +110,7 @@ std::vector<std::array<double, 4>> hac_parallel(
         if (ci == -1 || cj == -1)
             break;
 
-        result.push_back({static_cast<double>(id[ci]),
-                          static_cast<double>(id[cj]),
-                          best_d,
-                          static_cast<double>(cluster_nodes[ci].size() + cluster_nodes[cj].size())});
+        result.emplace_back(id[ci], id[cj], best_d, static_cast<int>(cluster_nodes[ci].size() + cluster_nodes[cj].size()));
 
         // merge
         for (auto node : cluster_nodes[cj])

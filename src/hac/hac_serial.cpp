@@ -11,7 +11,7 @@
  * @returns (n-1) x 4 linkage matrix: {cluster_i, cluster_j, distance,
  * merged_size}
  */
-std::vector<std::array<double, 4>> hac_serial(
+std::vector<std::tuple<int, int, double, int>> hac_serial(
     const std::vector<std::vector<double>>& dist,
     const std::vector<std::vector<double>>& df, Linkage linkage) {
     int n = static_cast<int>(dist.size());
@@ -22,7 +22,7 @@ std::vector<std::array<double, 4>> hac_serial(
     std::vector<int> id(n);
     for (int i = 0; i < n; ++i) id[i] = i;
 
-    std::vector<std::array<double, 4>> result;
+    std::vector<std::tuple<int, int, double, int>> result;
     result.reserve(n - 1);
 
     // for scipy dendrogram
@@ -52,11 +52,8 @@ std::vector<std::array<double, 4>> hac_serial(
 
         if (cluster_i == -1 || cluster_j == -1) break;
 
-        result.push_back(
-            {static_cast<double>(id[cluster_i]),
-             static_cast<double>(id[cluster_j]), best_d,
-             static_cast<double>(cluster_nodes[cluster_i].size() +
-                                 cluster_nodes[cluster_j].size())});
+        result.emplace_back(id[cluster_i], id[cluster_j], best_d, static_cast<int>(cluster_nodes[cluster_i].size() + cluster_nodes[cluster_j].size()));
+
 
         // merge
         for (auto& node_ind : cluster_nodes[cluster_j])

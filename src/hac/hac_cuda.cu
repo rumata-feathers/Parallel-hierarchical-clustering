@@ -194,7 +194,7 @@ static std::vector<double> flatten_matrix( const std::vector<std::vector<double>
     return flat;
 }
 
-std::vector<std::array<double, 4>> hac_cuda( std::vector<std::vector<double>> dist, const std::vector<std::vector<double>>& data, Linkage linkage){
+std::vector<std::tuple<int, int, double, int>> hac_cuda( std::vector<std::vector<double>> dist, const std::vector<std::vector<double>>& data, Linkage linkage){
 
 
     const int n = static_cast<int>(dist.size());
@@ -263,7 +263,7 @@ std::vector<std::array<double, 4>> hac_cuda( std::vector<std::vector<double>> di
                 centroids[i * dim + k] = data[i][k];
     }
 
-    std::vector<std::array<double, 4>> result;
+    std::vector<std::tuple<int, int, double, int>> result;
     result.reserve(n - 1);
 
     for (int step = 0; step < n - 1; ++step) {
@@ -376,12 +376,7 @@ std::vector<std::array<double, 4>> hac_cuda( std::vector<std::vector<double>> di
             break;
         }
 
-        result.push_back({
-            static_cast<double>(id[ci]),
-            static_cast<double>(id[cj]),
-            best_d,
-            static_cast<double>(clusters[ci].size() + clusters[cj].size())
-        });
+        result.emplace_back(id[ci], id[cj], best_d, static_cast<int>(clusters[ci].size() + clusters[cj].size()));
 
         if (centroid_based) {
             double ni = static_cast<double>(clusters[ci].size());

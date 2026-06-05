@@ -10,5 +10,5 @@
 * @param linkage : linkage criterion
 * @returns (n-1) x 4 linkage matrix: {cluster_i, cluster_j, distance, merged_size}
 */
-std::vector<std::array<double, 4>> hac_serial(
+std::vector<std::tuple<int, int, double, int>> hac_serial(
     const std::vector<std::vector<double>>& dist, const std::vector<std::vector<double>>& df, Linkage linkage);

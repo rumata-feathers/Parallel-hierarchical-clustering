@@ -1,9 +1,9 @@
 #pragma once
-#include <array>
+#include <tuple>
 #include <string>
 #include <vector>
 
-void write_linkage_matrix(const std::vector<std::array<double, 4>>& matrix,
+void write_linkage_matrix(const std::vector<std::tuple<int, int, double, int>>& matrix,
                           const std::string& path);
 
 void write_labels(const std::vector<std::string>& labels,

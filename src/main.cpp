@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
     // set-up time
     auto start_time = std::chrono::high_resolution_clock::now();
     // let's go baby
-    std::vector<std::array<double, 4>> result;
+    std::vector<std::tuple<int, int, double, int>> result;
     if (mode == "serial") {
         result = hac_serial(distances, df.features, linkage);
     } else if (mode == "parallel") {
