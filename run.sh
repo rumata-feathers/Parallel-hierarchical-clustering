@@ -234,7 +234,7 @@ for dataset in "${csv_files[@]}"; do
       mkdir -p "$CUDA_DIR"
       (( current++ )) || true
       draw_bar "$current" "$total_runs" "${stem}  [${linkage}]  cuda"
-      averaged=$(run_averaged cuda "$dataset" "$linkage" "$CUDA_DIR")
+      averaged=$(run_averaged cuda "$dataset" "$linkage" "$CUDA_DIR" 2>> "$CUDA_DIR/cuda_timing.log")
       echo "$averaged" >> "$CUDA_TIMING_TMP"
 
     fi
@@ -273,6 +273,9 @@ python3 scripts/plot_dendrogram.py "$RESULTS_DIR"
 
 echo "==> Plotting timings..."
 python3 scripts/plot_timings.py "$RESULTS_DIR"
+
+echo "==> Plotting CUDA copy vs compute breakdown..."
+python3 scripts/plot_cuda_timing.py "$RESULTS_DIR"
 
 echo ""
 echo "==> All done."
