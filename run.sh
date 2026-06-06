@@ -20,7 +20,7 @@ SYNTH_DIR="data/Clustering-Datasets/02. Synthetic"
 RESULTS_DIR="results"
 THREADS=4
 LINKAGES=(single complete average ward centroid median)
-CUDA=false  # set to true if built with -DENABLE_CUDA=ON
+if command -v nvcc &> /dev/null; then CUDA=true; else CUDA=false; fi
 RUNS=3      # number of repetitions per configuration
 SERIAL_DIR="$RESULTS_DIR/serial"
 PARALLEL_DIR="$RESULTS_DIR/parallel"
