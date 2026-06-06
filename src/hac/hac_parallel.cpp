@@ -61,14 +61,13 @@ std::vector<std::tuple<int, int, double, int>> hac_parallel(
     std::mutex mtx;
     std::condition_variable cv_start, cv_done;
     int generation = 0;
-    //  after the find-min reduce we set ci/cj and merged_cluster, then
-    //  switch phase to 1 so workers do the O(n) update instead.
     bool should_stop = false;
     int threads_done = 0; // counts workers that finished the current phase.
-
+    int phase = 0; // phase 0 = find-min scan, phase 1 = parallel distance update
     // shared across phases
     std::atomic<int> next_row{0};  // used in phase 0 (dynamic row steal)
-
+    std::atomic<int> next_k{0};    // phase 1 (dynamic update steal)
+    int merged_ci = -1;            // set by main before phase 1 starts
     std::vector<std::thread> threads(n_threads); 
     for (int t = 0; t < n_threads; ++t)
     {
@@ -84,28 +83,44 @@ std::vector<std::tuple<int, int, double, int>> hac_parallel(
                 }
 
                 if (should_stop) return;
-
-                double best = std::numeric_limits<double>::infinity();
-                int ci = -1, cj = -1;
-                int i;
-                while ((i = next_row.fetch_add(1)) < n)
+                if (phase == 0)
                 {
-                    if (!active[i]) continue;
-                    for (int k = 1; k <= n / 2; ++k)
+                    double best = std::numeric_limits<double>::infinity();
+                    int ci = -1, cj = -1;
+                    int i;
+                    while ((i = next_row.fetch_add(1)) < n)
                     {
-                        int j = (i + k) % n;
-                        if (!active[j]) continue;
-                        int a = std::min(i, j);
-                        int b = std::max(i, j);
-                        if (a == b) continue;
-                        double d = dist_matrix[a][b];
-                        if (d < best) { best = d; ci = a; cj = b; }
+                        if (!active[i]) continue;
+                        for (int k = 1; k <= n / 2; ++k)
+                        {
+                            int j = (i + k) % n;
+                            if (!active[j]) continue;
+                            int a = std::min(i, j);
+                            int b = std::max(i, j);
+                            if (a == b) continue;
+                            double d = dist_matrix[a][b];
+                            if (d < best) { best = d; ci = a; cj = b; }
+                        }
+                    }
+                    t_best[t] = best;
+                    t_ci[t]   = ci;
+                    t_cj[t]   = cj;
+                }
+                else
+                {
+                    // phase 1: recompute distances from merged cluster to all others each thread steals one k at a time
+                    // fixes variable cluster size imbalance since large clusters don't block other threads
+                    int k;
+                    while ((k = next_k.fetch_add(1)) < n)
+                    {
+                        if (!active[k] || k == merged_ci) continue;
+                        double d = compute_cluster_dist(
+                            cluster_nodes[merged_ci], cluster_nodes[k],
+                            dist_matrix, data, linkage);
+                        dist_matrix[merged_ci][k] = d;
+                        dist_matrix[k][merged_ci] = d;
                     }
                 }
-                t_best[t] = best;
-                t_ci[t]   = ci;
-                t_cj[t]   = cj;
-
                 {
                     std::lock_guard<std::mutex> lk(mtx);
                     ++threads_done;
@@ -118,6 +133,7 @@ std::vector<std::tuple<int, int, double, int>> hac_parallel(
     for (int step = 0; step < n - 1; ++step)
     {
         next_row = 0;
+        phase = 0; //  find closest pair
         {
             std::lock_guard<std::mutex> lk(mtx);
             threads_done = 0;
@@ -157,14 +173,19 @@ std::vector<std::tuple<int, int, double, int>> hac_parallel(
         
         for (int k = 0; k < n; ++k)
             dist_matrix[cj][k] = dist_matrix[k][cj] = std::numeric_limits<double>::infinity();
-        for (int k = 0; k < n; ++k) 
+        //  update distances from merged cluster in parallel
+        next_k = 0;
+        merged_ci = ci;
+        phase = 1;
         {
-            if (!active[k] || k == ci) continue;
-            double d = compute_cluster_dist(
-                cluster_nodes[ci], cluster_nodes[k],
-                dist_matrix, data, linkage);
-            dist_matrix[ci][k] = d;
-            dist_matrix[k][ci] = d;
+            std::lock_guard<std::mutex> lk(mtx);
+            threads_done = 0;
+            ++generation;
+        }
+        cv_start.notify_all();
+        {
+            std::unique_lock<std::mutex> lk(mtx);
+            cv_done.wait(lk, [&]{ return threads_done == n_threads; });
         }
     }
     {    std::lock_guard<std::mutex> lk(mtx);
