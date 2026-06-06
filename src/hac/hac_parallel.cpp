@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <iostream>
 #include <limits>
+#include <mutex>
 #include <thread>
 
 #include "distance.hpp"
@@ -25,7 +28,11 @@ std::vector<std::tuple<int, int, double, int>> hac_parallel(
     // also I realised, that I need some comments to understand what im writing, so I'll do it here and eventually will comment all
 
     int n = static_cast<int>(dist.size());
+    // mutable copy of the distance matrix 
+    //the next step only scans cached values instead of recomputing everything
 
+    
+    std::vector<std::vector<double>> dist_matrix = dist;
     // initialy each node is its own cluster
     std::vector<std::vector<int>> cluster_nodes(n);
     for (int i = 0; i < n; ++i)
@@ -71,8 +78,8 @@ std::vector<std::tuple<int, int, double, int>> hac_parallel(
                         int a = std::min(i, j);
                         int b = std::max(i, j);
                         if (a == b) continue;
-                        double d = compute_cluster_dist(
-                            cluster_nodes[a], cluster_nodes[b], dist, data, linkage);
+                        // read cached distance no recompute here
+                        double d = dist_matrix[a][b];
                         if (d < best) { best = d; ci = a; cj = b; }
                     }
                 }
@@ -106,11 +113,14 @@ std::vector<std::tuple<int, int, double, int>> hac_parallel(
         result.emplace_back(id[ci], id[cj], best_d, static_cast<int>(cluster_nodes[ci].size() + cluster_nodes[cj].size()));
 
         // merge
-        for (auto node : cluster_nodes[cj])
+        for (int node : cluster_nodes[cj])
             cluster_nodes[ci].push_back(node);
         cluster_nodes[cj].clear();
         active[cj] = false;
         id[ci] = next_id++;
+        
+        for (int k = 0; k < n; ++k)
+            dist_matrix[cj][k] = dist_matrix[k][cj] = std::numeric_limits<double>::infinity();
     }
 
     return result;
