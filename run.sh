@@ -20,8 +20,8 @@ SYNTH_DIR="data/Clustering-Datasets/02. Synthetic"
 RESULTS_DIR="results"
 THREADS=4
 LINKAGES=(single complete average ward centroid median)
-CUDA=true  # set to true if built with -DENABLE_CUDA=ON
-
+CUDA=false  # set to true if built with -DENABLE_CUDA=ON
+RUNS=3      # number of repetitions per configuration
 SERIAL_DIR="$RESULTS_DIR/serial"
 PARALLEL_DIR="$RESULTS_DIR/parallel"
 CUDA_DIR="$RESULTS_DIR/cuda"
@@ -42,6 +42,63 @@ draw_bar() {
     [[ $i -lt $filled ]] && bar+='█' || bar+='░'
   done
   printf '\r  [%s] %3d%%  %d/%d  %-45s' "$bar" "$pct" "$cur" "$tot" "$label"
+}
+# ---------------------------------------------------------------
+# Average wall_ms from RUNS timing rows produced by repeated runs.
+#
+# The binary appends one CSV row per invocation to the mode timings file.
+# We run RUNS times, collect the last RUNS rows, average wall_ms,
+# then write a single averaged row to the output file.
+#
+# Usage: run_averaged <mode> <dataset> <linkage> <out_dir> [extra args...]
+#
+# The function writes one averaged CSV row to <out_dir>/timings.csv.
+# ---------------------------------------------------------------
+run_averaged() {
+  local mode=$1
+  local dataset=$2
+  local linkage=$3
+  local out_dir=$4
+  shift 4
+  local extra_args=("$@")
+
+  # temporary file to collect raw rows from repeated runs
+  local tmp
+  tmp=$(mktemp)
+
+  for (( r = 0; r < RUNS; r++ )); do
+    ./build/hac \
+      --dataset  "$dataset" \
+      --linkage  "$linkage" \
+      --mode     "$mode" \
+      --out-dir  "$out_dir" \
+      "${extra_args[@]}" > /dev/null
+    # the binary appends a row to $out_dir/timings.csv; grab the last line
+    tail -n 1 "$out_dir/timings.csv" >> "$tmp"
+  done
+
+  # parse the repeated rows and average wall_ms (column index depends on header)
+  # header: dataset,linkage,mode,threads,n_points,wall_ms
+  # we keep all fields from run 1 and replace wall_ms with the average
+  python3 - "$tmp" <<'PYEOF'
+import sys, csv, statistics
+rows = []
+with open(sys.argv[1]) as f:
+    for line in f:
+        line = line.strip()
+        if line:
+            rows.append(line.split(','))
+if not rows:
+    sys.exit(0)
+# wall_ms is the last column
+wall_vals = [float(r[-1]) for r in rows]
+avg_wall = statistics.mean(wall_vals)
+# use first row as template, replace wall_ms with average
+out = rows[0][:-1] + [f"{avg_wall:.3f}"]
+print(','.join(out))
+PYEOF
+
+  rm -f "$tmp"
 }
 
 # ---------------------------------------------------------------
@@ -133,12 +190,21 @@ current=0
 echo "Running hac...  ($total_runs total runs)"
 draw_bar 0 "$total_runs" "starting..."
 
+# We collect averaged rows into temporary files then build timings.csv at the end.
+SERIAL_TIMING_TMP=$(mktemp)
+PARALLEL_TIMING_TMP=$(mktemp)
+CUDA_TIMING_TMP=$(mktemp)
+
+# Write header once (from any first real run)
+HEADER_WRITTEN=false
 for dataset in "${csv_files[@]}"; do
   stem=$(basename "$dataset" .csv)
   for linkage in "${LINKAGES[@]}"; do
 
     (( current++ )) || true
     draw_bar "$current" "$total_runs" "${stem}  [${linkage}]  serial"
+    
+    # first real run also writes --save-labels; subsequent runs skip it
     ./build/hac \
       --dataset  "$dataset" \
       --linkage  "$linkage" \
@@ -146,29 +212,41 @@ for dataset in "${csv_files[@]}"; do
       --out-dir  "$SERIAL_DIR" \
       --save-labels > /dev/null
 
+    # write header from the serial timings file if not done yet
+    if [ "$HEADER_WRITTEN" = false ]; then
+      head -n 1 "$SERIAL_DIR/timings.csv" > "$SERIAL_TIMING_TMP"
+      head -n 1 "$SERIAL_DIR/timings.csv" > "$PARALLEL_TIMING_TMP"
+      [ "$CUDA" = true ] && head -n 1 "$SERIAL_DIR/timings.csv" > "$CUDA_TIMING_TMP"
+      HEADER_WRITTEN=true
+    fi
+    
+    # run RUNS times and average
+    averaged=$(run_averaged serial "$dataset" "$linkage" "$SERIAL_DIR")
+    echo "$averaged" >> "$SERIAL_TIMING_TMP"
+  
+  
     (( current++ )) || true
     draw_bar "$current" "$total_runs" "${stem}  [${linkage}]  parallel"
-    ./build/hac \
-      --dataset  "$dataset" \
-      --linkage  "$linkage" \
-      --mode     parallel \
-      --threads  "$THREADS" \
-      --out-dir  "$PARALLEL_DIR" > /dev/null
+    averaged=$(run_averaged parallel "$dataset" "$linkage" "$PARALLEL_DIR" --threads "$THREADS")
+    echo "$averaged" >> "$PARALLEL_TIMING_TMP"
 
     if [ "$CUDA" = true ]; then
       mkdir -p "$CUDA_DIR"
       (( current++ )) || true
       draw_bar "$current" "$total_runs" "${stem}  [${linkage}]  cuda"
-      ./build/hac \
-        --dataset  "$dataset" \
-        --linkage  "$linkage" \
-        --mode     cuda \
-        --out-dir  "$CUDA_DIR" > /dev/null
+      averaged=$(run_averaged cuda "$dataset" "$linkage" "$CUDA_DIR")
+      echo "$averaged" >> "$CUDA_TIMING_TMP"
+
     fi
 
   done
 done
 printf '\n'  # end the progress bar line
+# copy averaged timing files into place
+cp "$SERIAL_TIMING_TMP"   "$SERIAL_DIR/timings.csv"
+cp "$PARALLEL_TIMING_TMP" "$PARALLEL_DIR/timings.csv"
+[ "$CUDA" = true ] && cp "$CUDA_TIMING_TMP" "$CUDA_DIR/timings.csv"
+rm -f "$SERIAL_TIMING_TMP" "$PARALLEL_TIMING_TMP" "$CUDA_TIMING_TMP"
 
 # ---------------------------------------------------------------
 # 4. Reorganise: move labels, merge timings
