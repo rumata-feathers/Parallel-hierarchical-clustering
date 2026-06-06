@@ -129,6 +129,9 @@ std::vector<std::tuple<int, int, double, int>> hac_parallel(
             }
         });
     }
+    // timing accumulators
+    double compute_ms = 0.0;
+    double update_ms = 0.0;
 
     for (int step = 0; step < n - 1; ++step)
     {
@@ -139,11 +142,15 @@ std::vector<std::tuple<int, int, double, int>> hac_parallel(
             threads_done = 0;
             ++generation;
         }
+        auto t0 = std::chrono::high_resolution_clock::now();
         cv_start.notify_all();
         {
             std::unique_lock<std::mutex> lk(mtx);
             cv_done.wait(lk, [&]{ return threads_done == n_threads; });
         }
+        
+        auto t1 = std::chrono::high_resolution_clock::now();
+        compute_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
 
 
         // find closest clusters
@@ -182,12 +189,16 @@ std::vector<std::tuple<int, int, double, int>> hac_parallel(
             threads_done = 0;
             ++generation;
         }
+        auto t2 = std::chrono::high_resolution_clock::now();
         cv_start.notify_all();
         {
             std::unique_lock<std::mutex> lk(mtx);
             cv_done.wait(lk, [&]{ return threads_done == n_threads; });
         }
+        auto t3 = std::chrono::high_resolution_clock::now();
+        update_ms += std::chrono::duration<double, std::milli>(t3 - t2).count();
     }
+    
     {    std::lock_guard<std::mutex> lk(mtx);
         should_stop = true;
         ++generation;
@@ -196,5 +207,9 @@ std::vector<std::tuple<int, int, double, int>> hac_parallel(
     for (std::thread &th : threads)
         th.join();
 
+        
+
+    std::cout << "[parallel timing] compute_ms=" << compute_ms
+              << "  update_ms=" << update_ms << "\n";
     return result;
 }
