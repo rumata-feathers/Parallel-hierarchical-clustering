@@ -121,6 +121,14 @@ std::vector<std::tuple<int, int, double, int>> hac_parallel(
         
         for (int k = 0; k < n; ++k)
             dist_matrix[cj][k] = dist_matrix[k][cj] = std::numeric_limits<double>::infinity();
+        for (int k = 0; k < n; ++k) {
+            if (!active[k] || k == ci) continue;
+            double d = compute_cluster_dist(
+                cluster_nodes[ci], cluster_nodes[k],
+                dist_matrix, data, linkage);
+            dist_matrix[ci][k] = d;
+            dist_matrix[k][ci] = d;
+        }
     }
 
     return result;
