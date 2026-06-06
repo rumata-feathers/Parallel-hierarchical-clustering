@@ -59,7 +59,7 @@ inline double compute_cluster_dist(
     }
     case Linkage::COMPLETE:
     {
-        double d = 0.0;
+        double d = -1.0;
         for (auto a : cluster_i)
             for (auto b : cluster_j)
                 d = std::max(d, dist[a][b]);
@@ -121,27 +121,23 @@ inline double compute_cluster_dist(
 inline void update_distances(
     int merged,
     int removed,
-    const std::vector<std::vector<int>> &cluster_nodes, std::vector<std::vector<double>> &dist_matrix,
-    const std::vector<std::vector<double>> &data,
+    const std::vector<std::vector<int>>& cluster_nodes,
+    const std::vector<std::vector<double>>& point_dist,  // original point distances
+    std::vector<std::vector<double>>& dist_matrix,        // cluster distances to update
+    const std::vector<std::vector<double>>& data,
     Linkage linkage)
 {
     int n = static_cast<int>(cluster_nodes.size());
-
     // recompute for merged clustesr
-    for (int k = 0; k < n; ++k)
-    {
-        if (cluster_nodes[k].empty() || k == merged)
-            continue;
+    for (int k = 0; k < n; ++k) {
+        if (cluster_nodes[k].empty() || k == merged) continue;
         double d = compute_cluster_dist(
-            cluster_nodes[merged], cluster_nodes[k],
-            dist_matrix, data, linkage);
+            cluster_nodes[merged], cluster_nodes[k], point_dist, data, linkage);
         dist_matrix[merged][k] = d;
         dist_matrix[k][merged] = d;
     }
-
     // removed clusters now inactive -> mark infinity
-    for (int k = 0; k < n; ++k)
-    {
+    for (int k = 0; k < n; ++k) {
         dist_matrix[removed][k] = std::numeric_limits<double>::infinity();
         dist_matrix[k][removed] = std::numeric_limits<double>::infinity();
     }

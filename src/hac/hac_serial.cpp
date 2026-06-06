@@ -77,7 +77,7 @@ std::vector<std::tuple<int, int, double, int>> hac_serial(
         cluster_nodes[cluster_j].clear();
         id[cluster_i] = next_id++;
 
-        update_distances(cluster_i, cluster_j, cluster_nodes, dist_matrix, df, linkage);
+        update_distances(cluster_i, cluster_j, cluster_nodes, dist, dist_matrix, df, linkage);
     }
 
     return result;

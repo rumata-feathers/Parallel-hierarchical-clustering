@@ -130,6 +130,24 @@ case "$MODE" in
     csv_files=("$SYNTH_DIR"/*.csv)
     echo "Mode: --full  (${#csv_files[@]} datasets)"
     ;;
+  --final)
+  SMALL_SETS=(
+    "zelnik6.csv"
+    "zelnik1.csv"
+    "3MC.csv"
+    "target.csv"
+    "2spiral.csv"
+    "smile2.csv"
+    "diamond9.csv"
+    "complex9.csv"
+  )
+  csv_files=()
+  for name in "${SMALL_SETS[@]}"; do
+    f="$SYNTH_DIR/$name"
+    [ -f "$f" ] && csv_files+=("$f")
+  done
+  echo "Mode: --final  (${#csv_files[@]} datasets — paper benchmark sets)"
+  ;;
   *)
     echo "Usage: $0 [--small | --full]"
     exit 1
@@ -234,7 +252,7 @@ for dataset in "${csv_files[@]}"; do
       mkdir -p "$CUDA_DIR"
       (( current++ )) || true
       draw_bar "$current" "$total_runs" "${stem}  [${linkage}]  cuda"
-      averaged=$(run_averaged cuda "$dataset" "$linkage" "$CUDA_DIR" 2>> "$CUDA_DIR/cuda_timing.log")
+      averaged=$(run_averaged cuda "$dataset" "$linkage" "$CUDA_DIR" --threads "$THREADS" 2>> "$CUDA_DIR/cuda_timing.log")
       echo "$averaged" >> "$CUDA_TIMING_TMP"
 
     fi

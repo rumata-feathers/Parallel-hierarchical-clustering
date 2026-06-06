@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # thread scaling
-DATASET="data/Clustering-Datasets/02. Synthetic/3MC.csv"
+DATASET="data/Clustering-Datasets/02. Synthetic/diamond9.csv"
 OUT="results/thread_scaling.csv"
 LINKAGES=(single complete average ward centroid median)
 THREAD_COUNTS=(1 2 4 8 16)
