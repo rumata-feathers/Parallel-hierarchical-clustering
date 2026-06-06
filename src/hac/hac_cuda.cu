@@ -383,8 +383,12 @@ std::vector<std::tuple<int, int, double, int>> hac_cuda( std::vector<std::vector
             double nj = static_cast<double>(clusters[cj].size());
             double total = ni + nj;
 
-            for (int k = 0; k < dim; ++k) {
-                centroids[ci * dim + k] = (ni * centroids[ci * dim + k] + nj * centroids[cj * dim + k]) / total;
+            for (int k = 0; k < dim; ++k) { 
+                if (linkage == Linkage::MEDIAN) { 
+                    centroids[ci * dim + k] = (centroids[ci * dim + k] + centroids[cj * dim + k]) / 2.0; 
+                } else { 
+                    centroids[ci * dim + k] = (ni * centroids[ci * dim + k] + nj * centroids[cj * dim + k]) / total; 
+                }
             }
         }
 

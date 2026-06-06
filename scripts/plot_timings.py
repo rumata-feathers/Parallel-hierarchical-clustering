@@ -339,7 +339,112 @@ def plot_scaling(df: pd.DataFrame, modes: list[str], plots_dir: str) -> None:
     plt.close(fig)
     print(f"  saved: {out}")
 
-
+# Figure 5: grouped bar chart — wall time per linkage (avg over datasets)
+# One group per linkage, one bar per mode (serial / parallel / cuda).
+def plot_grouped_bar(df: pd.DataFrame, modes: list[str], plots_dir: str) -> None:
+    all_modes = [BASELINE] + modes
+ 
+    avg = (df[df["mode"].isin(all_modes)]
+           .groupby(["linkage", "mode"])["wall_ms"]
+           .mean()
+           .reset_index())
+    if avg.empty:
+        return
+ 
+    linkages = [l for l in LINKAGE_ORDER if l in avg["linkage"].unique()]
+    x = np.arange(len(linkages))
+    n_modes = len(all_modes)
+    w = 0.8 / n_modes
+ 
+    fig, ax = plt.subplots(figsize=(max(10, len(linkages) * 1.8), 5.5))
+ 
+    for i, mode in enumerate(all_modes):
+        vals = []
+        for l in linkages:
+            cell = avg.loc[(avg.linkage == l) & (avg["mode"] == mode), "wall_ms"]
+            vals.append(cell.values[0] if len(cell) else np.nan)
+        color = MODE_COLORS.get(mode, MODE_COLOR_DEF)
+        bars = ax.bar(x + i * w, vals, w, label=mode,
+                      color=color, alpha=0.87, edgecolor="white", linewidth=0.5)
+        for bar, v in zip(bars, vals):
+            if not np.isnan(v):
+                ax.text(bar.get_x() + bar.get_width() / 2,
+                        bar.get_height() * 1.02,
+                        f"{v:.0f}", ha="center", va="bottom", fontsize=6.5)
+ 
+    ax.set_yscale("log")
+    ax.set_xticks(x + (n_modes - 1) * w / 2)
+    ax.set_xticklabels(linkages, fontsize=10)
+    ax.set_ylabel("Wall time (ms, avg over datasets, log scale)", fontsize=10)
+    ax.set_title("Wall time by linkage:  serial vs parallel vs cuda", fontsize=12)
+    ax.legend(fontsize=9)
+    ax.grid(axis="y", which="both", ls=":", alpha=0.4)
+    fig.tight_layout()
+ 
+    out = os.path.join(plots_dir, "timings_grouped_bar.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  saved: {out}")
+# Figure 6: thread scaling — speedup vs thread count
+# Reads results/thread_scaling.csv (separate experiment, not timings.csv).
+GRAPH_LINKAGES = ["single", "complete", "average"]
+GEOM_LINKAGES  = ["ward", "centroid", "median"]
+ 
+ 
+def plot_thread_scaling(results_dir: str, plots_dir: str) -> None:
+    path = os.path.join(results_dir, "thread_scaling.csv")
+    if not os.path.exists(path):
+        print(f"  no {path} — skipping thread-scaling plot "
+              f"(run scripts/thread_sweep.sh to generate)")
+        return
+ 
+    df = pd.read_csv(path, on_bad_lines="skip")
+    if df.empty or "threads" not in df.columns:
+        print("  thread_scaling.csv empty or malformed — skipping")
+        return
+ 
+    # average over any duplicate runs
+    agg = (df.groupby(["linkage", "threads"])["wall_ms"]
+           .mean().reset_index())
+ 
+    threads = sorted(agg["threads"].unique())
+    dataset = df["dataset"].iloc[0] if "dataset" in df.columns else "dataset"
+    n_pts   = int(df["n_points"].iloc[0]) if "n_points" in df.columns else None
+ 
+    palette = linkage_palette()
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
+ 
+    def draw(ax, linkages, title):
+        for lk in linkages:
+            sub = agg[agg["linkage"] == lk].sort_values("threads")
+            if sub.empty:
+                continue
+            t1 = sub.loc[sub["threads"] == sub["threads"].min(), "wall_ms"].values[0]
+            speedup = t1 / sub["wall_ms"].values
+            ax.plot(sub["threads"].values, speedup, "o-",
+                    color=palette.get(lk, "gray"), label=lk, lw=2, ms=7)
+        ax.plot(threads, threads, "k--", lw=1.2, alpha=0.4, label="ideal (linear)")
+        ax.axhline(1.0, color="red", lw=1, ls=":", alpha=0.5)
+        ax.set_xscale("log", base=2)
+        ax.set_xticks(threads)
+        ax.set_xticklabels([str(int(t)) for t in threads])
+        ax.set_xlabel("Number of threads", fontsize=11)
+        ax.set_ylabel("Speedup over 1 thread", fontsize=11)
+        ax.set_title(title, fontsize=11)
+        ax.legend(fontsize=9)
+        ax.grid(True, which="both", ls=":", alpha=0.4)
+ 
+    draw(ax1, GRAPH_LINKAGES, "Graph linkages (single / complete / average)")
+    draw(ax2, GEOM_LINKAGES,  "Geometric linkages (ward / centroid / median)")
+ 
+    suffix = f"  (n={n_pts})" if n_pts else ""
+    fig.suptitle(f"Thread scaling — {dataset}{suffix}", fontsize=13)
+    fig.tight_layout()
+ 
+    out = os.path.join(plots_dir, "timings_thread_scaling.png")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  saved: {out}")
 # ---------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------
@@ -359,13 +464,15 @@ if __name__ == "__main__":
     if not modes:
         print("Only serial timings found — nothing to compare.")
         sys.exit(0)
-
     charts = [
-        ("scatter (log-log)",         lambda: plot_scatter(df, modes, plots_dir)),
-        ("speedup bars",              lambda: plot_speedup_bars(df, modes, plots_dir)),
+        ("grouped bar (wall time)",   lambda: plot_grouped_bar(df, modes, plots_dir)),
         ("speedup heatmap",           lambda: plot_speedup_heatmap(df, modes, plots_dir)),
         ("scaling (wall time vs n)",  lambda: plot_scaling(df, modes, plots_dir)),
-    ]
+        ("scatter (log-log)",         lambda: plot_scatter(df, modes, plots_dir)),
+        ("speedup bars",              lambda: plot_speedup_bars(df, modes, plots_dir)),
+        ("thread scaling",            lambda: plot_thread_scaling(results_dir, plots_dir)),
+    ] 
+
     total = len(charts)
     print(f"Modes detected: {[BASELINE] + modes}")
     print(f"Plotting {total} timing charts...\n")
